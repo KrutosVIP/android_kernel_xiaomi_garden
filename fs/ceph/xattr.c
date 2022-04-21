@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/ceph/ceph_debug.h>
 #include <linux/ceph/pagelist.h>
 
@@ -74,7 +75,7 @@ static size_t ceph_vxattrcb_layout(struct ceph_inode_info *ci, char *val,
 	const char *ns_field = " pool_namespace=";
 	char buf[128];
 	size_t len, total_len = 0;
-	ssize_t ret;
+	int ret;
 
 	pool_ns = ceph_try_get_string(ci->i_layout.pool_ns);
 
@@ -98,8 +99,11 @@ static size_t ceph_vxattrcb_layout(struct ceph_inode_info *ci, char *val,
 	if (pool_ns)
 		total_len += strlen(ns_field) + pool_ns->len;
 
-	ret = total_len;
-	if (size >= total_len) {
+	if (!size) {
+		ret = total_len;
+	} else if (total_len > size) {
+		ret = -ERANGE;
+	} else {
 		memcpy(val, buf, len);
 		ret = len;
 		if (pool_name) {
@@ -753,12 +757,12 @@ ssize_t __ceph_getxattr(struct inode *inode, const char *name, void *value,
 	/* let's see if a virtual xattr was requested */
 	vxattr = ceph_match_vxattr(inode, name);
 	if (vxattr) {
+		err = ceph_do_getattr(inode, 0, true);
+		if (err)
+			return err;
 		err = -ENODATA;
-		if (!(vxattr->exists_cb && !vxattr->exists_cb(ci))) {
+		if (!(vxattr->exists_cb && !vxattr->exists_cb(ci)))
 			err = vxattr->getxattr_cb(ci, value, size);
-			if (size && size < err)
-				err = -ERANGE;
-		}
 		return err;
 	}
 
@@ -774,7 +778,7 @@ ssize_t __ceph_getxattr(struct inode *inode, const char *name, void *value,
 		spin_unlock(&ci->i_ceph_lock);
 
 		/* security module gets xattr while filling trace */
-		if (current->journal_info != NULL) {
+		if (current->journal_info) {
 			pr_warn_ratelimited("sync getxattr %p "
 					    "during filling trace\n", inode);
 			return -EBUSY;
@@ -806,7 +810,7 @@ ssize_t __ceph_getxattr(struct inode *inode, const char *name, void *value,
 
 	memcpy(value, xattr->val, xattr->val_len);
 
-	if (current->journal_info != NULL &&
+	if (current->journal_info &&
 	    !strncmp(name, XATTR_SECURITY_PREFIX, XATTR_SECURITY_PREFIX_LEN))
 		ci->i_ceph_flags |= CEPH_I_SEC_INITED;
 out:
@@ -1055,7 +1059,7 @@ do_sync_unlocked:
 		up_read(&mdsc->snap_rwsem);
 
 	/* security module set xattr while filling trace */
-	if (current->journal_info != NULL) {
+	if (current->journal_info) {
 		pr_warn_ratelimited("sync setxattr %p "
 				    "during filling trace\n", inode);
 		err = -EBUSY;
@@ -1105,7 +1109,7 @@ bool ceph_security_xattr_deadlock(struct inode *in)
 {
 	struct ceph_inode_info *ci;
 	bool ret;
-	if (in->i_security == NULL)
+	if (!in->i_security)
 		return false;
 	ci = ceph_inode(in);
 	spin_lock(&ci->i_ceph_lock);

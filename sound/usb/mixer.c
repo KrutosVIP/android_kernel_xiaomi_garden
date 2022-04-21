@@ -322,11 +322,14 @@ static int get_ctl_value_v1(struct usb_mixer_elem_info *cval, int request,
 
 	while (timeout-- > 0) {
 		idx = snd_usb_ctrl_intf(chip) | (cval->head.id << 8);
-		if (snd_usb_ctl_msg(chip->dev, usb_rcvctrlpipe(chip->dev, 0), request,
-				    USB_RECIP_INTERFACE | USB_TYPE_CLASS | USB_DIR_IN,
-				    validx, idx, buf, val_len) >= val_len) {
+		err = snd_usb_ctl_msg(chip->dev, usb_rcvctrlpipe(chip->dev, 0), request,
+				      USB_RECIP_INTERFACE | USB_TYPE_CLASS | USB_DIR_IN,
+				      validx, idx, buf, val_len);
+		if (err >= val_len) {
 			*value_ret = convert_signed_value(cval, snd_usb_combine_bytes(buf, val_len));
 			err = 0;
+			goto out;
+		} else if (err == -ETIMEDOUT) {
 			goto out;
 		}
 	}
@@ -491,11 +494,14 @@ int snd_usb_mixer_set_ctl_value(struct usb_mixer_elem_info *cval,
 
 	while (timeout-- > 0) {
 		idx = snd_usb_ctrl_intf(chip) | (cval->head.id << 8);
-		if (snd_usb_ctl_msg(chip->dev,
-				    usb_sndctrlpipe(chip->dev, 0), request,
-				    USB_RECIP_INTERFACE | USB_TYPE_CLASS | USB_DIR_OUT,
-				    validx, idx, buf, val_len) >= 0) {
+		err = snd_usb_ctl_msg(chip->dev,
+				      usb_sndctrlpipe(chip->dev, 0), request,
+				      USB_RECIP_INTERFACE | USB_TYPE_CLASS | USB_DIR_OUT,
+				      validx, idx, buf, val_len);
+		if (err >= 0) {
 			err = 0;
+			goto out;
+		} else if (err == -ETIMEDOUT) {
 			goto out;
 		}
 	}
@@ -1190,7 +1196,7 @@ static struct snd_kcontrol_new usb_feature_unit_ctl = {
 };
 
 /* the read-only variant */
-static struct snd_kcontrol_new usb_feature_unit_ctl_ro = {
+static const struct snd_kcontrol_new usb_feature_unit_ctl_ro = {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 	.name = "", /* will be filled later manually */
 	.info = mixer_ctl_feature_info,
@@ -1775,7 +1781,7 @@ static int mixer_ctl_procunit_put(struct snd_kcontrol *kcontrol,
 }
 
 /* alsa control interface for processing/extension unit */
-static struct snd_kcontrol_new mixer_procunit_ctl = {
+static const struct snd_kcontrol_new mixer_procunit_ctl = {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 	.name = "", /* will be filled later */
 	.info = mixer_ctl_feature_info,
@@ -1882,7 +1888,7 @@ static int build_audio_procunit(struct mixer_build *state, int unitid,
 				char *name)
 {
 	struct uac_processing_unit_descriptor *desc = raw_desc;
-	int num_ins;
+	int num_ins = desc->bNrInPins;
 	struct usb_mixer_elem_info *cval;
 	struct snd_kcontrol *kctl;
 	int i, err, nameid, type, len;
@@ -1897,13 +1903,7 @@ static int build_audio_procunit(struct mixer_build *state, int unitid,
 		0, NULL, default_value_info
 	};
 
-	if (desc->bLength < 13) {
-		usb_audio_err(state->chip, "invalid %s descriptor (id %d)\n", name, unitid);
-		return -EINVAL;
-	}
-
-	num_ins = desc->bNrInPins;
-	if (desc->bLength < 13 + num_ins ||
+	if (desc->bLength < 13 || desc->bLength < 13 + num_ins ||
 	    desc->bLength < num_ins + uac_processing_unit_bControlSize(desc, state->mixer->protocol)) {
 		usb_audio_err(state->chip, "invalid %s descriptor (id %d)\n", name, unitid);
 		return -EINVAL;
@@ -2069,7 +2069,7 @@ static int mixer_ctl_selector_put(struct snd_kcontrol *kcontrol,
 }
 
 /* alsa control interface for selector unit */
-static struct snd_kcontrol_new mixer_selectunit_ctl = {
+static const struct snd_kcontrol_new mixer_selectunit_ctl = {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 	.name = "", /* will be filled later */
 	.info = mixer_ctl_selector_info,
@@ -2178,8 +2178,6 @@ static int parse_audio_selector_unit(struct mixer_build *state, int unitid,
 	kctl = snd_ctl_new1(&mixer_selectunit_ctl, cval);
 	if (! kctl) {
 		usb_audio_err(state->chip, "cannot malloc kcontrol\n");
-		for (i = 0; i < desc->bNrInPins; i++)
-			kfree(namelist[i]);
 		kfree(namelist);
 		kfree(cval);
 		return -ENOMEM;

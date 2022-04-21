@@ -17,8 +17,10 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
+#include <linux/sched/task_stack.h>
 #include <linux/scatterlist.h>
 #include <linux/dma-mapping.h>
+#include <linux/sched/task.h>
 #include <linux/stacktrace.h>
 #include <linux/dma-debug.h>
 #include <linux/spinlock.h>
@@ -940,20 +942,16 @@ static int device_dma_allocations(struct device *dev, struct dma_debug_entry **o
 	unsigned long flags;
 	int count = 0, i;
 
-	local_irq_save(flags);
-
 	for (i = 0; i < HASH_SIZE; ++i) {
-		spin_lock(&dma_entry_hash[i].lock);
+		spin_lock_irqsave(&dma_entry_hash[i].lock, flags);
 		list_for_each_entry(entry, &dma_entry_hash[i].list, list) {
 			if (entry->dev == dev) {
 				count += 1;
 				*out_entry = entry;
 			}
 		}
-		spin_unlock(&dma_entry_hash[i].lock);
+		spin_unlock_irqrestore(&dma_entry_hash[i].lock, flags);
 	}
-
-	local_irq_restore(flags);
 
 	return count;
 }
@@ -1497,21 +1495,13 @@ void debug_dma_alloc_coherent(struct device *dev, size_t size,
 	if (!entry)
 		return;
 
-	/* handle vmalloc and linear addresses */
-	if (!is_vmalloc_addr(virt) && !virt_addr_valid(virt))
-		return;
-
 	entry->type      = dma_debug_coherent;
 	entry->dev       = dev;
-	entry->offset	 = (size_t) virt & ~PAGE_MASK;
+	entry->pfn	 = page_to_pfn(virt_to_page(virt));
+	entry->offset	 = offset_in_page(virt);
 	entry->size      = size;
 	entry->dev_addr  = dma_addr;
 	entry->direction = DMA_BIDIRECTIONAL;
-
-	if (is_vmalloc_addr(virt))
-		entry->pfn = vmalloc_to_pfn(virt);
-	else
-		entry->pfn = page_to_pfn(virt_to_page(virt));
 
 	add_dma_entry(entry);
 }
@@ -1523,20 +1513,12 @@ void debug_dma_free_coherent(struct device *dev, size_t size,
 	struct dma_debug_entry ref = {
 		.type           = dma_debug_coherent,
 		.dev            = dev,
-		.offset		= (size_t) virt & ~PAGE_MASK,
+		.pfn		= page_to_pfn(virt_to_page(virt)),
+		.offset		= offset_in_page(virt),
 		.dev_addr       = addr,
 		.size           = size,
 		.direction      = DMA_BIDIRECTIONAL,
 	};
-
-	/* handle vmalloc and linear addresses */
-	if (!is_vmalloc_addr(virt) && !virt_addr_valid(virt))
-		return;
-
-	if (is_vmalloc_addr(virt))
-		ref.pfn = vmalloc_to_pfn(virt);
-	else
-		ref.pfn = page_to_pfn(virt_to_page(virt));
 
 	if (unlikely(dma_debug_disabled()))
 		return;

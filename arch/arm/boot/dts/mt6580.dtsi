@@ -22,11 +22,6 @@
 	#size-cells = <1>;
 	interrupt-parent = <&sysirq>;
 
-	chosen: chosen {
-	bootargs = "console=tty0 console=ttyMT3,921600n1 \
-vmalloc=400M androidboot.hardware=mt6580 \
-firmware_class.path=/vendor/firmware loop.max_part=7";
-	};
 	cpus {
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -96,7 +91,7 @@ firmware_class.path=/vendor/firmware loop.max_part=7";
 		#interrupt-cells = <3>;
 		interrupt-parent = <&gic>;
 		reg = <0x10211000 0x1000>,
-		      <0x10212000 0x1000>,
+		      <0x10212000 0x2000>,
 		      <0x10214000 0x2000>,
 		      <0x10216000 0x2000>;
 	};

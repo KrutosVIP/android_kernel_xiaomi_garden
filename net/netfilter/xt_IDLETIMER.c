@@ -76,7 +76,6 @@ struct idletimer_tg {
 	bool send_nl_msg;
 	bool active;
 	uid_t uid;
-	bool suspend_time_valid;
 };
 
 static LIST_HEAD(idletimer_tg_list);
@@ -246,12 +245,8 @@ static int idletimer_resume(struct notifier_block *notifier,
 	switch (pm_event) {
 	case PM_SUSPEND_PREPARE:
 		get_monotonic_boottime(&timer->last_suspend_time);
-		timer->suspend_time_valid = true;
 		break;
 	case PM_POST_SUSPEND:
-		if (!timer->suspend_time_valid)
-			break;
-		timer->suspend_time_valid = false;
 		spin_lock_bh(&timestamp_lock);
 		if (!timer->active) {
 			spin_unlock_bh(&timestamp_lock);
@@ -282,35 +277,15 @@ static int idletimer_resume(struct notifier_block *notifier,
 	return NOTIFY_DONE;
 }
 
-static int idletimer_check_sysfs_name(const char *name, unsigned int size)
-{
-	int ret;
-
-	ret = xt_check_proc_name(name, size);
-	if (ret < 0)
-		return ret;
-
-	if (!strcmp(name, "power") ||
-	    !strcmp(name, "subsystem") ||
-	    !strcmp(name, "uevent"))
-		return -EINVAL;
-
-	return 0;
-}
-
 static int idletimer_tg_create(struct idletimer_tg_info *info)
 {
 	int ret;
 
-	info->timer = kzalloc(sizeof(*info->timer), GFP_KERNEL);
+	info->timer = kmalloc(sizeof(*info->timer), GFP_KERNEL);
 	if (!info->timer) {
 		ret = -ENOMEM;
 		goto out;
 	}
-
-	ret = idletimer_check_sysfs_name(info->label, sizeof(info->label));
-	if (ret < 0)
-		goto out_free_timer;
 
 	sysfs_attr_init(&info->timer->attr.attr);
 	info->timer->attr.attr.name = kstrdup(info->label, GFP_KERNEL);
@@ -502,6 +477,7 @@ static struct xt_target idletimer_tg __read_mostly = {
 	.family		= NFPROTO_UNSPEC,
 	.target		= idletimer_tg_target,
 	.targetsize     = sizeof(struct idletimer_tg_info),
+	.usersize	= offsetof(struct idletimer_tg_info, timer),
 	.checkentry	= idletimer_tg_checkentry,
 	.destroy        = idletimer_tg_destroy,
 	.me		= THIS_MODULE,

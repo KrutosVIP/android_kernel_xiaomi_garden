@@ -21,14 +21,8 @@
 
 
 #ifdef CONFIG_TRUSTY
-#ifdef CONFIG_TRUSTY_INTERRUPT_MAP
-extern void handle_trusty_ipi(int ipinr);
-#endif
 s32 trusty_std_call32(struct device *dev, u32 smcnr, u32 a0, u32 a1, u32 a2);
 s32 trusty_fast_call32(struct device *dev, u32 smcnr, u32 a0, u32 a1, u32 a2);
-#ifdef CONFIG_TRUSTY_WDT_FIQ_ARMV7_SUPPORT
-s32 trusty_fast_call32_nodev(u32 smcnr, u32 a0, u32 a1, u32 a2);
-#endif
 #ifdef CONFIG_64BIT
 s64 trusty_fast_call64(struct device *dev, u64 smcnr, u64 a0, u64 a1, u64 a2);
 #endif
@@ -88,12 +82,7 @@ static inline void trusty_nop_init(struct trusty_nop *nop,
 	nop->args[2] = arg2;
 }
 
-#if defined(CONFIG_MTK_NEBULA_VM_SUPPORT) && defined(CONFIG_GZ_SMC_CALL_REMAP)
-void trusty_enqueue_nop(struct device *dev, struct trusty_nop *nop,
-			bool vmm_specific);
-#else
 void trusty_enqueue_nop(struct device *dev, struct trusty_nop *nop);
-#endif
 void trusty_dequeue_nop(struct device *dev, struct trusty_nop *nop);
 
 #endif

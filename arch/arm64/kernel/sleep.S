@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #include <linux/errno.h>
 #include <linux/linkage.h>
 #include <asm/asm-offsets.h>
@@ -133,6 +134,10 @@ ENTRY(_cpu_resume)
 #ifdef CONFIG_KASAN
 	mov	x0, sp
 	bl	kasan_unpoison_task_stack_below
+#endif
+
+#ifdef CONFIG_TRUSTY_FIQ
+	bl	trusty_fiq_cpu_resume
 #endif
 
 	ldp	x19, x20, [x29, #16]

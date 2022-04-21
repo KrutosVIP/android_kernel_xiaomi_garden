@@ -11,6 +11,7 @@
  * GNU General Public License for more details.
  *
  */
+
 #include <linux/module.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>

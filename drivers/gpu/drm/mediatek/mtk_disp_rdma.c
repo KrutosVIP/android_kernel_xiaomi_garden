@@ -17,7 +17,6 @@
 #include <linux/of_device.h>
 #include <linux/of_irq.h>
 #include <linux/platform_device.h>
-#include <linux/pm_runtime.h>
 
 #include "mtk_drm_crtc.h"
 #include "mtk_drm_ddp_comp.h"
@@ -37,9 +36,9 @@
 #define DISP_REG_RDMA_TARGET_LINE		0x001c
 #define DISP_REG_RDMA_FIFO_CON			0x0040
 #define RDMA_FIFO_UNDERFLOW_EN				BIT(31)
-#define RDMA_FIFO_PSEUDO_SIZE(bytes)		(((bytes) / 16UL) << 16)
+#define RDMA_FIFO_PSEUDO_SIZE(bytes)			(((bytes) / 16) << 16)
 #define RDMA_OUTPUT_VALID_FIFO_THRESHOLD(bytes)		((bytes) / 16)
-#define RDMA_FIFO_SIZE(module)			((module)->data->fifo_size)
+#define RDMA_FIFO_SIZE(rdma)			((rdma)->data->fifo_size)
 
 struct mtk_disp_rdma_data {
 	unsigned int fifo_size;
@@ -106,24 +105,12 @@ static void mtk_rdma_disable_vblank(struct mtk_ddp_comp *comp)
 
 static void mtk_rdma_start(struct mtk_ddp_comp *comp)
 {
-	int ret;
-
-	ret = pm_runtime_get_sync(comp->dev);
-	if (ret < 0)
-		DRM_ERROR("Failed to enable power domain: %d\n", ret);
-
 	rdma_update_bits(comp, DISP_REG_RDMA_GLOBAL_CON, RDMA_ENGINE_EN,
 			 RDMA_ENGINE_EN);
 }
 
 static void mtk_rdma_stop(struct mtk_ddp_comp *comp)
 {
-	int ret;
-
-	ret = pm_runtime_put(comp->dev);
-	if (ret < 0)
-		DRM_ERROR("Failed to disable power domain: %d\n", ret);
-
 	rdma_update_bits(comp, DISP_REG_RDMA_GLOBAL_CON, RDMA_ENGINE_EN, 0);
 }
 
@@ -168,8 +155,8 @@ static int mtk_disp_rdma_bind(struct device *dev, struct device *master,
 
 	ret = mtk_ddp_comp_register(drm_dev, &priv->ddp_comp);
 	if (ret < 0) {
-		dev_err(dev, "Failed to register component %s: %d\n",
-			dev->of_node->full_name, ret);
+		dev_err(dev, "Failed to register component %pOF: %d\n",
+			dev->of_node, ret);
 		return ret;
 	}
 
@@ -195,7 +182,7 @@ static int mtk_disp_rdma_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct mtk_disp_rdma *priv;
-	enum mtk_ddp_comp_id comp_id;
+	int comp_id;
 	int irq;
 	int ret;
 
@@ -208,7 +195,7 @@ static int mtk_disp_rdma_probe(struct platform_device *pdev)
 		return irq;
 
 	comp_id = mtk_ddp_comp_get_id(dev->of_node, MTK_DISP_RDMA);
-	if ((int)comp_id < 0) {
+	if (comp_id < 0) {
 		dev_err(dev, "Failed to identify by alias: %d\n", comp_id);
 		return comp_id;
 	}
@@ -235,13 +222,9 @@ static int mtk_disp_rdma_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, priv);
 
-	pm_runtime_enable(dev);
-
 	ret = component_add(dev, &mtk_disp_rdma_component_ops);
-	if (ret != 0) {
+	if (ret)
 		dev_err(dev, "Failed to add component: %d\n", ret);
-		pm_runtime_disable(dev);
-	}
 
 	return ret;
 }
@@ -250,7 +233,6 @@ static int mtk_disp_rdma_remove(struct platform_device *pdev)
 {
 	component_del(&pdev->dev, &mtk_disp_rdma_component_ops);
 
-	pm_runtime_disable(&pdev->dev);
 	return 0;
 }
 

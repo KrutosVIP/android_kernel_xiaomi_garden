@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * include/linux/writeback.h
  */
@@ -9,6 +10,9 @@
 #include <linux/fs.h>
 #include <linux/flex_proportions.h>
 #include <linux/backing-dev-defs.h>
+#include <linux/blk_types.h>
+
+struct bio;
 
 DECLARE_PER_CPU(int, dirty_throttle_leaks);
 
@@ -43,7 +47,7 @@ enum writeback_sync_modes {
  */
 enum wb_reason {
 	WB_REASON_BACKGROUND,
-	WB_REASON_TRY_TO_FREE_PAGES,
+	WB_REASON_VMSCAN,
 	WB_REASON_SYNC,
 	WB_REASON_PERIODIC,
 	WB_REASON_LAPTOP_TIMER,
@@ -99,6 +103,16 @@ struct writeback_control {
 	size_t wb_tcand_bytes;		/* bytes written by this candidate */
 #endif
 };
+
+static inline int wbc_to_write_flags(struct writeback_control *wbc)
+{
+	if (wbc->sync_mode == WB_SYNC_ALL)
+		return REQ_SYNC;
+	else if (wbc->for_kupdate || wbc->for_background)
+		return REQ_BACKGROUND;
+
+	return 0;
+}
 
 /*
  * A wb_domain represents a domain that wb's (bdi_writeback's) belong to
@@ -224,6 +238,7 @@ static inline void inode_attach_wb(struct inode *inode, struct page *page)
 static inline void inode_detach_wb(struct inode *inode)
 {
 	if (inode->i_wb) {
+		WARN_ON_ONCE(!(inode->i_state & I_CLEAR));
 		wb_put(inode->i_wb);
 		inode->i_wb = NULL;
 	}

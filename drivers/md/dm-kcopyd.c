@@ -55,17 +55,15 @@ struct dm_kcopyd_client {
 	struct dm_kcopyd_throttle *throttle;
 
 /*
- * We maintain four lists of jobs:
+ * We maintain three lists of jobs:
  *
  * i)   jobs waiting for pages
  * ii)  jobs that have pages, and are waiting for the io to be issued.
- * iii) jobs that don't need to do any IO and just run a callback
- * iv) jobs that have completed.
+ * iii) jobs that have completed.
  *
- * All four of these are protected by job_lock.
+ * All three of these are protected by job_lock.
  */
 	spinlock_t job_lock;
-	struct list_head callback_jobs;
 	struct list_head complete_jobs;
 	struct list_head io_jobs;
 	struct list_head pages_jobs;
@@ -358,6 +356,7 @@ struct kcopyd_job {
 	struct mutex lock;
 	atomic_t sub_jobs;
 	sector_t progress;
+	sector_t write_offset;
 
 	struct kcopyd_job *master_job;
 };
@@ -388,6 +387,31 @@ void dm_kcopyd_exit(void)
  * Functions to push and pop a job onto the head of a given job
  * list.
  */
+static struct kcopyd_job *pop_io_job(struct list_head *jobs,
+				     struct dm_kcopyd_client *kc)
+{
+	struct kcopyd_job *job;
+
+	/*
+	 * For I/O jobs, pop any read, any write without sequential write
+	 * constraint and sequential writes that are at the right position.
+	 */
+	list_for_each_entry(job, jobs, list) {
+		if (job->rw == READ || !test_bit(DM_KCOPYD_WRITE_SEQ, &job->flags)) {
+			list_del(&job->list);
+			return job;
+		}
+
+		if (job->write_offset == job->master_job->write_offset) {
+			job->master_job->write_offset += job->source.count;
+			list_del(&job->list);
+			return job;
+		}
+	}
+
+	return NULL;
+}
+
 static struct kcopyd_job *pop(struct list_head *jobs,
 			      struct dm_kcopyd_client *kc)
 {
@@ -397,8 +421,12 @@ static struct kcopyd_job *pop(struct list_head *jobs,
 	spin_lock_irqsave(&kc->job_lock, flags);
 
 	if (!list_empty(jobs)) {
-		job = list_entry(jobs->next, struct kcopyd_job, list);
-		list_del(&job->list);
+		if (jobs == &kc->io_jobs)
+			job = pop_io_job(jobs, kc);
+		else {
+			job = list_entry(jobs->next, struct kcopyd_job, list);
+			list_del(&job->list);
+		}
 	}
 	spin_unlock_irqrestore(&kc->job_lock, flags);
 
@@ -456,8 +484,6 @@ static int run_complete_job(struct kcopyd_job *job)
 	if (atomic_dec_and_test(&kc->nr_jobs))
 		wake_up(&kc->destroyq);
 
-	cond_resched();
-
 	return 0;
 }
 
@@ -509,6 +535,14 @@ static int run_io_job(struct kcopyd_job *job)
 		.notify.context = job,
 		.client = job->kc->io_client,
 	};
+
+	/*
+	 * If we need to write sequentially and some reads or writes failed,
+	 * no point in continuing.
+	 */
+	if (test_bit(DM_KCOPYD_WRITE_SEQ, &job->flags) &&
+	    job->master_job->write_err)
+		return -EIO;
 
 	io_job_start(job->kc->throttle);
 
@@ -586,7 +620,6 @@ static void do_work(struct work_struct *work)
 	struct dm_kcopyd_client *kc = container_of(work,
 					struct dm_kcopyd_client, kcopyd_work);
 	struct blk_plug plug;
-	unsigned long flags;
 
 	/*
 	 * The order that these are called is *very* important.
@@ -595,10 +628,6 @@ static void do_work(struct work_struct *work)
 	 * list.  io jobs call wake when they complete and it all
 	 * starts again.
 	 */
-	spin_lock_irqsave(&kc->job_lock, flags);
-	list_splice_tail_init(&kc->callback_jobs, &kc->complete_jobs);
-	spin_unlock_irqrestore(&kc->job_lock, flags);
-
 	blk_start_plug(&plug);
 	process_jobs(&kc->complete_jobs, kc, run_complete_job);
 	process_jobs(&kc->pages_jobs, kc, run_pages_job);
@@ -616,7 +645,7 @@ static void dispatch_job(struct kcopyd_job *job)
 	struct dm_kcopyd_client *kc = job->kc;
 	atomic_inc(&kc->nr_jobs);
 	if (unlikely(!job->source.count))
-		push(&kc->callback_jobs, job);
+		push(&kc->complete_jobs, job);
 	else if (job->pages == &zero_page_list)
 		push(&kc->io_jobs, job);
 	else
@@ -664,6 +693,7 @@ static void segment_complete(int read_err, unsigned long write_err,
 		int i;
 
 		*sub_job = *job;
+		sub_job->write_offset = progress;
 		sub_job->source.sector += progress;
 		sub_job->source.count = count;
 
@@ -732,6 +762,27 @@ int dm_kcopyd_copy(struct dm_kcopyd_client *kc, struct dm_io_region *from,
 	job->num_dests = num_dests;
 	memcpy(&job->dests, dests, sizeof(*dests) * num_dests);
 
+	/*
+	 * If one of the destination is a host-managed zoned block device,
+	 * we need to write sequentially. If one of the destination is a
+	 * host-aware device, then leave it to the caller to choose what to do.
+	 */
+	if (!test_bit(DM_KCOPYD_WRITE_SEQ, &job->flags)) {
+		for (i = 0; i < job->num_dests; i++) {
+			if (bdev_zoned_model(dests[i].bdev) == BLK_ZONED_HM) {
+				set_bit(DM_KCOPYD_WRITE_SEQ, &job->flags);
+				break;
+			}
+		}
+	}
+
+	/*
+	 * If we need to write sequentially, errors cannot be ignored.
+	 */
+	if (test_bit(DM_KCOPYD_WRITE_SEQ, &job->flags) &&
+	    test_bit(DM_KCOPYD_IGNORE_ERROR, &job->flags))
+		clear_bit(DM_KCOPYD_IGNORE_ERROR, &job->flags);
+
 	if (from) {
 		job->source = *from;
 		job->pages = NULL;
@@ -742,11 +793,11 @@ int dm_kcopyd_copy(struct dm_kcopyd_client *kc, struct dm_io_region *from,
 		job->pages = &zero_page_list;
 
 		/*
-		 * Use WRITE SAME to optimize zeroing if all dests support it.
+		 * Use WRITE ZEROES to optimize zeroing if all dests support it.
 		 */
-		job->rw = REQ_OP_WRITE_SAME;
+		job->rw = REQ_OP_WRITE_ZEROES;
 		for (i = 0; i < job->num_dests; i++)
-			if (!bdev_write_same(job->dests[i].bdev)) {
+			if (!bdev_write_zeroes_sectors(job->dests[i].bdev)) {
 				job->rw = WRITE;
 				break;
 			}
@@ -755,6 +806,7 @@ int dm_kcopyd_copy(struct dm_kcopyd_client *kc, struct dm_io_region *from,
 	job->fn = fn;
 	job->context = context;
 	job->master_job = job;
+	job->write_offset = 0;
 
 	if (job->source.count <= SUB_JOB_SIZE)
 		dispatch_job(job);
@@ -803,7 +855,7 @@ void dm_kcopyd_do_callback(void *j, int read_err, unsigned long write_err)
 	job->read_err = read_err;
 	job->write_err = write_err;
 
-	push(&kc->callback_jobs, job);
+	push(&kc->complete_jobs, job);
 	wake(kc);
 }
 EXPORT_SYMBOL(dm_kcopyd_do_callback);
@@ -833,7 +885,6 @@ struct dm_kcopyd_client *dm_kcopyd_client_create(struct dm_kcopyd_throttle *thro
 		return ERR_PTR(-ENOMEM);
 
 	spin_lock_init(&kc->job_lock);
-	INIT_LIST_HEAD(&kc->callback_jobs);
 	INIT_LIST_HEAD(&kc->complete_jobs);
 	INIT_LIST_HEAD(&kc->io_jobs);
 	INIT_LIST_HEAD(&kc->pages_jobs);
@@ -883,7 +934,6 @@ void dm_kcopyd_client_destroy(struct dm_kcopyd_client *kc)
 	/* Wait for completion of all jobs submitted by this client. */
 	wait_event(kc->destroyq, !atomic_read(&kc->nr_jobs));
 
-	BUG_ON(!list_empty(&kc->callback_jobs));
 	BUG_ON(!list_empty(&kc->complete_jobs));
 	BUG_ON(!list_empty(&kc->io_jobs));
 	BUG_ON(!list_empty(&kc->pages_jobs));

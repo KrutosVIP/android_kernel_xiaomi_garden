@@ -207,16 +207,12 @@ struct mtk_pll_data {
 	uint32_t en_mask;
 	uint32_t pd_reg;
 	uint32_t tuner_reg;
-	uint32_t tuner_en_reg;
-	uint8_t tuner_en_bit;
 	int pd_shift;
 	unsigned int flags;
 	const struct clk_ops *ops;
 	u32 rst_bar_mask;
 	unsigned long fmax;
-	unsigned long fmin;
 	int pcwbits;
-	int pcwibits;
 	uint32_t pcw_reg;
 	int pcw_shift;
 	const struct mtk_pll_div_table *div_table;
@@ -239,7 +235,5 @@ static inline void mtk_register_reset_controller(struct device_node *np,
 {
 }
 #endif
-#if (defined(CONFIG_MACH_MT6763))
-extern void univpll_192m_en(int en);
-#endif
+
 #endif /* __DRV_CLK_MTK_H */

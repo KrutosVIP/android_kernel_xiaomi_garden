@@ -22,6 +22,7 @@
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
+#include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <media/v4l2-event.h>
 #include <media/v4l2-mem2mem.h>
@@ -29,7 +30,6 @@
 #include <media/videobuf2-core.h>
 #include <media/videobuf2-dma-contig.h>
 #include <soc/mediatek/smi.h>
-#include <linux/iommu.h>
 
 #include "mtk_jpeg_hw.h"
 #include "mtk_jpeg_core.h"
@@ -756,7 +756,7 @@ static void mtk_jpeg_stop_streaming(struct vb2_queue *q)
 	pm_runtime_put_sync(ctx->jpeg->dev);
 }
 
-static struct vb2_ops mtk_jpeg_qops = {
+static const struct vb2_ops mtk_jpeg_qops = {
 	.queue_setup        = mtk_jpeg_queue_setup,
 	.buf_prepare        = mtk_jpeg_buf_prepare,
 	.buf_queue          = mtk_jpeg_buf_queue,
@@ -834,10 +834,8 @@ static void mtk_jpeg_device_run(void *priv)
 	}
 
 	mtk_jpeg_set_dec_src(ctx, src_buf, &bs);
-	if (mtk_jpeg_set_dec_dst(ctx, &jpeg_src_buf->dec_param, dst_buf, &fb)) {
-		dev_err(jpeg->dev, "Invalid parameter\n");
+	if (mtk_jpeg_set_dec_dst(ctx, &jpeg_src_buf->dec_param, dst_buf, &fb))
 		goto dec_end;
-	}
 
 	spin_lock_irqsave(&jpeg->hw_lock, flags);
 	mtk_jpeg_dec_reset(jpeg->dec_reg_base);
@@ -867,7 +865,7 @@ static void mtk_jpeg_job_abort(void *priv)
 {
 }
 
-static struct v4l2_m2m_ops mtk_jpeg_m2m_ops = {
+static const struct v4l2_m2m_ops mtk_jpeg_m2m_ops = {
 	.device_run = mtk_jpeg_device_run,
 	.job_ready  = mtk_jpeg_job_ready,
 	.job_abort  = mtk_jpeg_job_abort,
@@ -947,10 +945,9 @@ static irqreturn_t mtk_jpeg_dec_irq(int irq, void *priv)
 	dst_buf = v4l2_m2m_dst_buf_remove(ctx->fh.m2m_ctx);
 	jpeg_src_buf = mtk_jpeg_vb2_to_srcbuf(src_buf);
 
-	if (dec_irq_ret >= MTK_JPEG_DEC_RESULT_UNDERFLOW) {
-		dev_err(jpeg->dev, "decode Underflow\n");
+	if (dec_irq_ret >= MTK_JPEG_DEC_RESULT_UNDERFLOW)
 		mtk_jpeg_dec_reset(jpeg->dec_reg_base);
-	}
+
 	if (dec_irq_ret != MTK_JPEG_DEC_RESULT_EOF_DONE) {
 		dev_err(jpeg->dev, "decode failed\n");
 		goto dec_end;
@@ -1099,13 +1096,7 @@ static int mtk_jpeg_probe(struct platform_device *pdev)
 	struct resource *res;
 	int dec_irq;
 	int ret;
-	struct iommu_domain *domain;
 
-	domain = iommu_get_domain_for_dev(&pdev->dev);
-	if (!domain) {
-		dev_err(&pdev->dev, "[IOMMU]iommu driver not ready");
-		return -EPROBE_DEFER;
-	}
 	jpeg = devm_kzalloc(&pdev->dev, sizeof(*jpeg), GFP_KERNEL);
 	if (!jpeg)
 		return -ENOMEM;
@@ -1113,12 +1104,6 @@ static int mtk_jpeg_probe(struct platform_device *pdev)
 	mutex_init(&jpeg->lock);
 	spin_lock_init(&jpeg->hw_lock);
 	jpeg->dev = &pdev->dev;
-
-	ret = mtk_jpeg_clk_init(jpeg);
-	if (ret) {
-		dev_err(&pdev->dev, "Failed to init clk, err %d return EPROBE_DEFER\n", ret);
-		return -EPROBE_DEFER;
-	}
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	jpeg->dec_reg_base = devm_ioremap_resource(&pdev->dev, res);
@@ -1142,6 +1127,12 @@ static int mtk_jpeg_probe(struct platform_device *pdev)
 			dec_irq, ret);
 		ret = -EINVAL;
 		goto err_req_irq;
+	}
+
+	ret = mtk_jpeg_clk_init(jpeg);
+	if (ret) {
+		dev_err(&pdev->dev, "Failed to init clk, err %d\n", ret);
+		goto err_clk_init;
 	}
 
 	ret = v4l2_device_register(&pdev->dev, &jpeg->v4l2_dev);
@@ -1203,6 +1194,7 @@ err_m2m_init:
 
 err_dev_register:
 
+err_clk_init:
 
 err_req_irq:
 
@@ -1222,8 +1214,7 @@ static int mtk_jpeg_remove(struct platform_device *pdev)
 	return 0;
 }
 
-#ifdef CONFIG_PM
-static int mtk_jpeg_pm_suspend(struct device *dev)
+static __maybe_unused int mtk_jpeg_pm_suspend(struct device *dev)
 {
 	struct mtk_jpeg_dev *jpeg = dev_get_drvdata(dev);
 
@@ -1233,7 +1224,7 @@ static int mtk_jpeg_pm_suspend(struct device *dev)
 	return 0;
 }
 
-static int mtk_jpeg_pm_resume(struct device *dev)
+static __maybe_unused int mtk_jpeg_pm_resume(struct device *dev)
 {
 	struct mtk_jpeg_dev *jpeg = dev_get_drvdata(dev);
 
@@ -1242,10 +1233,8 @@ static int mtk_jpeg_pm_resume(struct device *dev)
 
 	return 0;
 }
-#endif /* CONFIG_PM */
 
-#ifdef CONFIG_PM_SLEEP
-static int mtk_jpeg_suspend(struct device *dev)
+static __maybe_unused int mtk_jpeg_suspend(struct device *dev)
 {
 	int ret;
 
@@ -1256,7 +1245,7 @@ static int mtk_jpeg_suspend(struct device *dev)
 	return ret;
 }
 
-static int mtk_jpeg_resume(struct device *dev)
+static __maybe_unused int mtk_jpeg_resume(struct device *dev)
 {
 	int ret;
 
@@ -1267,7 +1256,6 @@ static int mtk_jpeg_resume(struct device *dev)
 
 	return ret;
 }
-#endif /* CONFIG_PM_SLEEP */
 
 static const struct dev_pm_ops mtk_jpeg_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(mtk_jpeg_suspend, mtk_jpeg_resume)
@@ -1283,10 +1271,6 @@ static const struct of_device_id mtk_jpeg_match[] = {
 		.compatible = "mediatek,mt2701-jpgdec",
 		.data       = NULL,
 	},
-	{
-		.compatible = "mediatek,mt2712-jpgdec",
-		.data       = NULL,
-	},
 	{},
 };
 
@@ -1296,7 +1280,6 @@ static struct platform_driver mtk_jpeg_driver = {
 	.probe = mtk_jpeg_probe,
 	.remove = mtk_jpeg_remove,
 	.driver = {
-		.owner          = THIS_MODULE,
 		.name           = MTK_JPEG_NAME,
 		.of_match_table = mtk_jpeg_match,
 		.pm             = &mtk_jpeg_pm_ops,

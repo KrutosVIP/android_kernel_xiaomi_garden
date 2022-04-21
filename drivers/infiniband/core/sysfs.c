@@ -253,6 +253,10 @@ static ssize_t rate_show(struct ib_port *p, struct port_attribute *unused,
 		speed = " EDR";
 		rate = 250;
 		break;
+	case IB_SPEED_HDR:
+		speed = " HDR";
+		rate = 500;
+		break;
 	case IB_SPEED_SDR:
 	default:		/* default to SDR for invalid rates */
 		rate = 25;
@@ -485,7 +489,7 @@ static ssize_t show_pma_counter(struct ib_port *p, struct port_attribute *attr,
 	ret = get_perf_mad(p->ibdev, p->port_num, tab_attr->attr_id, &data,
 			40 + offset / 8, sizeof(data));
 	if (ret < 0)
-		return ret;
+		return sprintf(buf, "N/A (no PMA)\n");
 
 	switch (width) {
 	case 4:
@@ -1008,12 +1012,10 @@ static int add_port(struct ib_device *device, int port_num,
 		goto err_put;
 	}
 
-	if (device->process_mad) {
-		p->pma_table = get_counter_table(device, port_num);
-		ret = sysfs_create_group(&p->kobj, p->pma_table);
-		if (ret)
-			goto err_put_gid_attrs;
-	}
+	p->pma_table = get_counter_table(device, port_num);
+	ret = sysfs_create_group(&p->kobj, p->pma_table);
+	if (ret)
+		goto err_put_gid_attrs;
 
 	p->gid_group.name  = "gids";
 	p->gid_group.attrs = alloc_group_attrs(show_port_gid, attr.gid_tbl_len);
@@ -1126,8 +1128,7 @@ err_free_gid:
 	p->gid_group.attrs = NULL;
 
 err_remove_pma:
-	if (p->pma_table)
-		sysfs_remove_group(&p->kobj, p->pma_table);
+	sysfs_remove_group(&p->kobj, p->pma_table);
 
 err_put_gid_attrs:
 	kobject_put(&p->gid_attr_group->kobj);
@@ -1209,8 +1210,8 @@ static ssize_t show_fw_ver(struct device *device, struct device_attribute *attr,
 {
 	struct ib_device *dev = container_of(device, struct ib_device, dev);
 
-	ib_get_device_fw_str(dev, buf, PAGE_SIZE);
-	strlcat(buf, "\n", PAGE_SIZE);
+	ib_get_device_fw_str(dev, buf);
+	strlcat(buf, "\n", IB_FW_VERSION_NAME_MAX);
 	return strlen(buf);
 }
 
@@ -1239,9 +1240,7 @@ static void free_port_list_attributes(struct ib_device *device)
 			kfree(port->hw_stats);
 			free_hsag(&port->kobj, port->hw_stats_ag);
 		}
-
-		if (port->pma_table)
-			sysfs_remove_group(p, port->pma_table);
+		sysfs_remove_group(p, port->pma_table);
 		sysfs_remove_group(p, &port->pkey_group);
 		sysfs_remove_group(p, &port->gid_group);
 		sysfs_remove_group(&port->gid_attr_group->kobj,
@@ -1263,7 +1262,6 @@ int ib_device_register_sysfs(struct ib_device *device,
 	int ret;
 	int i;
 
-	device->dev.parent = device->dma_device;
 	ret = dev_set_name(class_dev, "%s", device->name);
 	if (ret)
 		return ret;

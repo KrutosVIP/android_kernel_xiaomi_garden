@@ -128,11 +128,6 @@ static void kick_vqs(struct work_struct *work)
 	struct trusty_vdev *tvdev;
 	struct trusty_ctx *tctx = container_of(work, struct trusty_ctx,
 					       kick_vqs);
-
-#ifdef CONFIG_MTK_ENABLE_GENIEZONE
-	set_user_nice(current, -20);
-#endif
-
 	mutex_lock(&tctx->mlock);
 	list_for_each_entry(tvdev, &tctx->vdev_list, node) {
 		for (i = 0; i < tvdev->vring_num; i++) {
@@ -142,10 +137,6 @@ static void kick_vqs(struct work_struct *work)
 		}
 	}
 	mutex_unlock(&tctx->mlock);
-
-#ifdef CONFIG_MTK_ENABLE_GENIEZONE
-	set_user_nice(current, 0);
-#endif
 }
 
 static bool trusty_virtio_notify(struct virtqueue *vq)
@@ -159,11 +150,7 @@ static bool trusty_virtio_notify(struct virtqueue *vq)
 		atomic_set(&tvr->needs_kick, 1);
 		queue_work(tctx->kick_wq, &tctx->kick_vqs);
 	} else {
-#if defined(CONFIG_MTK_NEBULA_VM_SUPPORT) && defined(CONFIG_GZ_SMC_CALL_REMAP)
-		trusty_enqueue_nop(tctx->dev->parent, &tvr->kick_nop, true);
-#else
 		trusty_enqueue_nop(tctx->dev->parent, &tvr->kick_nop);
-#endif
 	}
 
 	return true;
@@ -238,7 +225,7 @@ static u64 trusty_virtio_get_features(struct virtio_device *vdev)
 static int trusty_virtio_finalize_features(struct virtio_device *vdev)
 {
 	struct trusty_vdev *tvdev = vdev_to_tvdev(vdev);
-
+	
 	/* Make sure we don't have any features > 32 bits! */
 	BUG_ON((u32)vdev->features != vdev->features);
 
@@ -313,7 +300,8 @@ static void trusty_virtio_del_vqs(struct virtio_device *vdev)
 static struct virtqueue *_find_vq(struct virtio_device *vdev,
 				  unsigned id,
 				  void (*callback)(struct virtqueue *vq),
-				  const char *name)
+				  const char *name,
+				  bool ctx)
 {
 	struct trusty_vring *tvr;
 	struct trusty_vdev *tvdev = vdev_to_tvdev(vdev);
@@ -343,13 +331,13 @@ static struct virtqueue *_find_vq(struct virtio_device *vdev,
 	/* da field is only 32 bit wide. Use previously unused 'reserved' field
 	 * to store top 32 bits of 64-bit address
 	 */
-	tvr->vr_descr->pa = (u32)((u64)pa >> 32);
+	tvr->vr_descr->pa = (u32)(pa >> 32);
 
 	dev_info(&vdev->dev, "vring%d: va(pa)  %p(%llx) qsz %d notifyid %d\n",
 		 id, tvr->vaddr, (u64)tvr->paddr, tvr->elem_num, tvr->notifyid);
 
 	tvr->vq = vring_new_virtqueue(id, tvr->elem_num, tvr->align,
-				      vdev, true, tvr->vaddr,
+				      vdev, true, ctx, tvr->vaddr,
 				      trusty_virtio_notify, callback, name);
 	if (!tvr->vq) {
 		dev_err(&vdev->dev, "vring_new_virtqueue %s failed\n",
@@ -370,13 +358,16 @@ err_new_virtqueue:
 static int trusty_virtio_find_vqs(struct virtio_device *vdev, unsigned nvqs,
 				  struct virtqueue *vqs[],
 				  vq_callback_t *callbacks[],
-				  const char * const names[])
+				  const char * const names[],
+				  const bool *ctx,
+				  struct irq_affinity *desc)
 {
 	uint i;
 	int ret;
 
 	for (i = 0; i < nvqs; i++) {
-		vqs[i] = _find_vq(vdev, i, callbacks[i], names[i]);
+		vqs[i] = _find_vq(vdev, i, callbacks[i], names[i],
+				  ctx ? ctx[i] : false);
 		if (IS_ERR(vqs[i])) {
 			ret = PTR_ERR(vqs[i]);
 			_del_vqs(vdev);
@@ -662,7 +653,7 @@ static int trusty_virtio_probe(struct platform_device *pdev)
 	tctx->check_wq = alloc_workqueue("trusty-check-wq", WQ_UNBOUND, 0);
 	if (!tctx->check_wq) {
 		ret = -ENODEV;
-		dev_info(&pdev->dev, "Failed create trusty-check-wq\n");
+		dev_err(&pdev->dev, "Failed create trusty-check-wq\n");
 		goto err_create_check_wq;
 	}
 
@@ -670,7 +661,7 @@ static int trusty_virtio_probe(struct platform_device *pdev)
 					WQ_UNBOUND | WQ_CPU_INTENSIVE, 0);
 	if (!tctx->kick_wq) {
 		ret = -ENODEV;
-		dev_info(&pdev->dev, "Failed create trusty-kick-wq\n");
+		dev_err(&pdev->dev, "Failed create trusty-kick-wq\n");
 		goto err_create_kick_wq;
 	}
 
@@ -726,6 +717,7 @@ static const struct of_device_id trusty_of_match[] = {
 	{
 		.compatible = "android,trusty-virtio-v1",
 	},
+	{},
 };
 
 MODULE_DEVICE_TABLE(of, trusty_of_match);

@@ -89,8 +89,9 @@
 #include <linux/netfilter_ipv4.h>
 #include <linux/random.h>
 #include <linux/slab.h>
+#include <linux/netfilter/xt_qtaguid.h>
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #include <linux/inet.h>
 #include <linux/igmp.h>
@@ -163,7 +164,7 @@ void inet_sock_destruct(struct sock *sk)
 	}
 
 	WARN_ON(atomic_read(&sk->sk_rmem_alloc));
-	WARN_ON(atomic_read(&sk->sk_wmem_alloc));
+	WARN_ON(refcount_read(&sk->sk_wmem_alloc));
 	WARN_ON(sk->sk_wmem_queued);
 	WARN_ON(sk->sk_forward_alloc);
 
@@ -389,8 +390,18 @@ lookup_protocol:
 
 	if (sk->sk_prot->init) {
 		err = sk->sk_prot->init(sk);
-		if (err)
+		if (err) {
 			sk_common_release(sk);
+			goto out;
+		}
+	}
+
+	if (!kern) {
+		err = BPF_CGROUP_RUN_PROG_INET_SOCK(sk);
+		if (err) {
+			sk_common_release(sk);
+			goto out;
+		}
 	}
 out:
 	return err;
@@ -412,6 +423,9 @@ int inet_release(struct socket *sock)
 	if (sk) {
 		long timeout;
 
+#ifdef CONFIG_NETFILTER_XT_MATCH_QTAGUID
+		qtaguid_untag(sock, true);
+#endif
 		/* Applications forget to leave groups before exiting */
 		ip_mc_drop_socket(sk);
 
@@ -484,7 +498,7 @@ int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 
 	snum = ntohs(addr->sin_port);
 	err = -EACCES;
-	if (snum && snum < PROT_SOCK &&
+	if (snum && snum < inet_prot_sock(net) &&
 	    !ns_capable(net->user_ns, CAP_NET_BIND_SERVICE))
 		goto out;
 
@@ -575,7 +589,7 @@ static long inet_wait_for_connect(struct sock *sk, long timeo, int writebias)
  *	TCP 'magic' in here.
  */
 int __inet_stream_connect(struct socket *sock, struct sockaddr *uaddr,
-			  int addr_len, int flags)
+			  int addr_len, int flags, int is_sendmsg)
 {
 	struct sock *sk = sock->sk;
 	int err;
@@ -610,7 +624,7 @@ int __inet_stream_connect(struct socket *sock, struct sockaddr *uaddr,
 		goto out;
 	case SS_CONNECTING:
 		if (inet_sk(sk)->defer_connect)
-			err = -EINPROGRESS;
+			err = is_sendmsg ? -EINPROGRESS : -EISCONN;
 		else
 			err = -EALREADY;
 		/* Fall out of switch with err, set for this state */
@@ -684,7 +698,7 @@ int inet_stream_connect(struct socket *sock, struct sockaddr *uaddr,
 	int err;
 
 	lock_sock(sock->sk);
-	err = __inet_stream_connect(sock, uaddr, addr_len, flags);
+	err = __inet_stream_connect(sock, uaddr, addr_len, flags, 0);
 	release_sock(sock->sk);
 	return err;
 }
@@ -694,11 +708,12 @@ EXPORT_SYMBOL(inet_stream_connect);
  *	Accept a pending connection. The TCP layer now gives BSD semantics.
  */
 
-int inet_accept(struct socket *sock, struct socket *newsock, int flags)
+int inet_accept(struct socket *sock, struct socket *newsock, int flags,
+		bool kern)
 {
 	struct sock *sk1 = sock->sk;
 	int err = -EINVAL;
-	struct sock *sk2 = sk1->sk_prot->accept(sk1, flags, &err);
+	struct sock *sk2 = sk1->sk_prot->accept(sk1, flags, &err, kern);
 
 	if (!sk2)
 		goto do_err;
@@ -948,6 +963,8 @@ const struct proto_ops inet_stream_ops = {
 	.sendpage	   = inet_sendpage,
 	.splice_read	   = tcp_splice_read,
 	.read_sock	   = tcp_read_sock,
+	.sendmsg_locked    = tcp_sendmsg_locked,
+	.sendpage_locked   = tcp_sendpage_locked,
 	.peek_len	   = tcp_peek_len,
 #ifdef CONFIG_COMPAT
 	.compat_setsockopt = compat_sock_common_setsockopt,
@@ -1309,7 +1326,6 @@ struct sk_buff *inet_gso_segment(struct sk_buff *skb,
 		if (encap)
 			skb_reset_inner_headers(skb);
 		skb->network_header = (u8 *)iph - skb->head;
-		skb_reset_mac_len(skb);
 	} while ((skb = skb->next));
 
 out:
@@ -1346,6 +1362,9 @@ struct sk_buff **inet_gro_receive(struct sk_buff **head, struct sk_buff *skb)
 		goto out_unlock;
 
 	if (*(u8 *)iph != 0x45)
+		goto out_unlock;
+
+	if (ip_is_fragment(iph))
 		goto out_unlock;
 
 	if (unlikely(ip_fast_csum((u8 *)iph, 5)))
@@ -1429,7 +1448,7 @@ out_unlock:
 	rcu_read_unlock();
 
 out:
-	NAPI_GRO_CB(skb)->flush |= flush;
+	skb_gro_flush_final(skb, pp, flush);
 
 	return pp;
 }
@@ -1604,8 +1623,12 @@ static const struct net_protocol igmp_protocol = {
 };
 #endif
 
-static const struct net_protocol tcp_protocol = {
+/* thinking of making this const? Don't.
+ * early_demux can change based on sysctl.
+ */
+static struct net_protocol tcp_protocol = {
 	.early_demux	=	tcp_v4_early_demux,
+	.early_demux_handler =  tcp_v4_early_demux,
 	.handler	=	tcp_v4_rcv,
 	.err_handler	=	tcp_v4_err,
 	.no_policy	=	1,
@@ -1613,8 +1636,12 @@ static const struct net_protocol tcp_protocol = {
 	.icmp_strict_tag_validation = 1,
 };
 
-static const struct net_protocol udp_protocol = {
+/* thinking of making this const? Don't.
+ * early_demux can change based on sysctl.
+ */
+static struct net_protocol udp_protocol = {
 	.early_demux =	udp_v4_early_demux,
+	.early_demux_handler =	udp_v4_early_demux,
 	.handler =	udp_rcv,
 	.err_handler =	udp_err,
 	.no_policy =	1,
@@ -1725,6 +1752,11 @@ static __net_init int inet_init_net(struct net *net)
 	net->ipv4.sysctl_ip_default_ttl = IPDEFTTL;
 	net->ipv4.sysctl_ip_dynaddr = 0;
 	net->ipv4.sysctl_ip_early_demux = 1;
+	net->ipv4.sysctl_udp_early_demux = 1;
+	net->ipv4.sysctl_tcp_early_demux = 1;
+#ifdef CONFIG_SYSCTL
+	net->ipv4.sysctl_ip_prot_sock = PROT_SOCK;
+#endif
 
 	/* Some igmp sysctl, whose values are always used */
 	net->ipv4.sysctl_igmp_max_memberships = 20;
@@ -1773,6 +1805,11 @@ static const struct net_offload ipip_offload = {
 	},
 };
 
+static int __init ipip_offload_init(void)
+{
+	return inet_add_offload(&ipip_offload, IPPROTO_IPIP);
+}
+
 static int __init ipv4_offload_init(void)
 {
 	/*
@@ -1782,9 +1819,10 @@ static int __init ipv4_offload_init(void)
 		pr_crit("%s: Cannot add UDP protocol offload\n", __func__);
 	if (tcpv4_offload_init() < 0)
 		pr_crit("%s: Cannot add TCP protocol offload\n", __func__);
+	if (ipip_offload_init() < 0)
+		pr_crit("%s: Cannot add IPIP protocol offload\n", __func__);
 
 	dev_add_offload(&ip_packet_offload);
-	inet_add_offload(&ipip_offload, IPPROTO_IPIP);
 	return 0;
 }
 
@@ -1862,8 +1900,6 @@ static int __init inet_init(void)
 	 */
 
 	ip_init();
-
-	tcp_v4_init();
 
 	/* Setup TCP slab cache for open requests. */
 	tcp_init();

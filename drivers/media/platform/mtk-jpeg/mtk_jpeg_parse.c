@@ -20,7 +20,6 @@
 
 #define TEM	0x01
 #define SOF0	0xc0
-#define DHT     0xc4
 #define RST	0xd0
 #define SOI	0xd8
 #define EOI	0xd9
@@ -67,14 +66,13 @@ static bool mtk_jpeg_do_parse(struct mtk_jpeg_dec_param *param, u8 *src_addr_va,
 			      u32 src_size)
 {
 	bool notfound = true;
-	bool fileend = false;
 	struct mtk_jpeg_stream stream;
 
 	stream.addr = src_addr_va;
 	stream.size = src_size;
 	stream.curr = 0;
-	/* need check huffman for hardware enhance */
-	while (!fileend && (!param->huffman_exist || notfound)) {
+
+	while (notfound) {
 		int i, length, byte;
 		u32 word;
 
@@ -135,13 +133,9 @@ static bool mtk_jpeg_do_parse(struct mtk_jpeg_dec_param *param, u8 *src_addr_va,
 			break;
 		case RST ... RST + 7:
 		case SOI:
+		case EOI:
 		case TEM:
 			break;
-		case EOI:
-			fileend = true;
-			break;
-		case DHT:
-			param->huffman_exist = 1;
 		default:
 			if (read_word_be(&stream, &word))
 				break;

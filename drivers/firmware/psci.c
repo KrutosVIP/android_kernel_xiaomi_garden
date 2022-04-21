@@ -169,14 +169,9 @@ static int psci_cpu_off(u32 state)
 {
 	int err;
 	u32 fn;
+
 	fn = psci_function_id[PSCI_FN_CPU_OFF];
-#ifdef CONFIG_MTK_FIQ_CACHE
-	do {
-		err = invoke_psci_fn(fn, state, 0, 0);
-	} while (err);
-#else
 	err = invoke_psci_fn(fn, state, 0, 0);
-#endif
 	return psci_to_linux_errno(err);
 }
 
@@ -256,19 +251,15 @@ static int get_set_conduit_method(struct device_node *np)
 	return 0;
 }
 
-#if (!defined(CONFIG_MEDIATEK_WATCHDOG) && !defined(CONFIG_MACH_MT8167))
 static void psci_sys_reset(enum reboot_mode reboot_mode, const char *cmd)
 {
 	invoke_psci_fn(PSCI_0_2_FN_SYSTEM_RESET, 0, 0, 0);
 }
-#endif
 
-#if (!defined(CONFIG_MACH_MT6757) && !defined(CONFIG_MACH_MT8167))
 static void psci_sys_poweroff(void)
 {
 	invoke_psci_fn(PSCI_0_2_FN_SYSTEM_OFF, 0, 0, 0);
 }
-#endif
 
 static int __init psci_features(u32 psci_func_id)
 {
@@ -308,8 +299,8 @@ static int psci_dt_cpu_init_idle(struct device_node *cpu_node, int cpu)
 					   "arm,psci-suspend-param",
 					   &state);
 		if (ret) {
-			pr_warn(" * %s missing arm,psci-suspend-param property\n",
-				state_node->full_name);
+			pr_warn(" * %pOF missing arm,psci-suspend-param property\n",
+				state_node);
 			of_node_put(state_node);
 			goto free_mem;
 		}
@@ -411,7 +402,7 @@ static int psci_suspend_finisher(unsigned long index)
 	u32 *state = __this_cpu_read(psci_power_state);
 
 	return psci_ops.cpu_suspend(state[index - 1],
-				    virt_to_phys(cpu_resume));
+				    __pa_symbol(cpu_resume));
 }
 
 int psci_cpu_suspend_enter(unsigned long index)
@@ -447,7 +438,7 @@ CPUIDLE_METHOD_OF_DECLARE(psci, "psci", &psci_cpuidle_ops);
 static int psci_system_suspend(unsigned long unused)
 {
 	return invoke_psci_fn(PSCI_FN_NATIVE(1_0, SYSTEM_SUSPEND),
-			      virt_to_phys(cpu_resume), 0, 0);
+			      __pa_symbol(cpu_resume), 0, 0);
 }
 
 static int psci_system_suspend_enter(suspend_state_t state)
@@ -568,13 +559,9 @@ static void __init psci_0_2_set_functions(void)
 
 	psci_ops.migrate_info_type = psci_migrate_info_type;
 
-#if (!defined(CONFIG_MEDIATEK_WATCHDOG) && !defined(CONFIG_MACH_MT8167))
 	arm_pm_restart = psci_sys_reset;
-#endif
 
-#if (!defined(CONFIG_MACH_MT6757) && !defined(CONFIG_MACH_MT8167))
 	pm_power_off = psci_sys_poweroff;
-#endif
 }
 
 /*
@@ -690,7 +677,7 @@ int __init psci_dt_init(void)
 
 	np = of_find_matching_node_and_match(NULL, psci_of_match, &matched_np);
 
-	if (!np)
+	if (!np || !of_device_is_available(np))
 		return -ENODEV;
 
 	init_fn = (psci_initcall_t)matched_np->data;

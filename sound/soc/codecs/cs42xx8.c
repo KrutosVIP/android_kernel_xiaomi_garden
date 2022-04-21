@@ -105,20 +105,6 @@ static const struct snd_kcontrol_new cs42xx8_adc3_snd_controls[] = {
 	SOC_ENUM("ADC3 Single Ended Mode Switch", adc3_single_enum),
 };
 
-static int cs42xx8_adc_delay_event(struct snd_soc_dapm_widget *w,
-		struct snd_kcontrol *kcontrol, int event)
-{
-	switch (event) {
-	case SND_SOC_DAPM_POST_PMU:
-		msleep(400);
-		break;
-	default:
-		break;
-	}
-
-	return 0;
-}
-
 static const struct snd_soc_dapm_widget cs42xx8_dapm_widgets[] = {
 	SND_SOC_DAPM_DAC("DAC1", "Playback", CS42XX8_PWRCTL, 1, 1),
 	SND_SOC_DAPM_DAC("DAC2", "Playback", CS42XX8_PWRCTL, 2, 1),
@@ -134,10 +120,8 @@ static const struct snd_soc_dapm_widget cs42xx8_dapm_widgets[] = {
 	SND_SOC_DAPM_OUTPUT("AOUT4L"),
 	SND_SOC_DAPM_OUTPUT("AOUT4R"),
 
-	SND_SOC_DAPM_ADC_E("ADC1", "Capture", CS42XX8_PWRCTL, 5, 1,
-			cs42xx8_adc_delay_event, SND_SOC_DAPM_POST_PMU),
-	SND_SOC_DAPM_ADC_E("ADC2", "Capture", CS42XX8_PWRCTL, 6, 1,
-			cs42xx8_adc_delay_event, SND_SOC_DAPM_POST_PMU),
+	SND_SOC_DAPM_ADC("ADC1", "Capture", CS42XX8_PWRCTL, 5, 1),
+	SND_SOC_DAPM_ADC("ADC2", "Capture", CS42XX8_PWRCTL, 6, 1),
 
 	SND_SOC_DAPM_INPUT("AIN1L"),
 	SND_SOC_DAPM_INPUT("AIN1R"),
@@ -148,8 +132,7 @@ static const struct snd_soc_dapm_widget cs42xx8_dapm_widgets[] = {
 };
 
 static const struct snd_soc_dapm_widget cs42xx8_adc3_dapm_widgets[] = {
-	SND_SOC_DAPM_ADC_E("ADC3", "Capture", CS42XX8_PWRCTL, 7, 1,
-			   cs42xx8_adc_delay_event, SND_SOC_DAPM_POST_PMU),
+	SND_SOC_DAPM_ADC("ADC3", "Capture", CS42XX8_PWRCTL, 7, 1),
 
 	SND_SOC_DAPM_INPUT("AIN3L"),
 	SND_SOC_DAPM_INPUT("AIN3R"),
@@ -338,7 +321,6 @@ static struct snd_soc_dai_driver cs42xx8_dai = {
 };
 
 static const struct reg_default cs42xx8_reg[] = {
-	{ 0x01, 0x01 },   /* Chip I.D. and Revision Register */
 	{ 0x02, 0x00 },   /* Power Control */
 	{ 0x03, 0xF0 },   /* Functional Mode */
 	{ 0x04, 0x46 },   /* Interface Formats */
@@ -515,13 +497,6 @@ int cs42xx8_probe(struct device *dev, struct regmap *regmap)
 	/* Make sure hardware reset done */
 	msleep(5);
 
-	/*
-	 * We haven't marked the chip revision as volatile due to
-	 * sharing a register with the right input volume; explicitly
-	 * bypass the cache to read it.
-	 */
-	regcache_cache_bypass(cs42xx8->regmap, true);
-
 	/* Validate the chip ID */
 	ret = regmap_read(cs42xx8->regmap, CS42XX8_CHIPID, &val);
 	if (ret < 0) {
@@ -539,8 +514,6 @@ int cs42xx8_probe(struct device *dev, struct regmap *regmap)
 
 	dev_info(dev, "found device, revision %X\n",
 			val & CS42XX8_CHIPID_REV_ID_MASK);
-
-	regcache_cache_bypass(cs42xx8->regmap, false);
 
 	cs42xx8_dai.name = cs42xx8->drvdata->name;
 
@@ -586,7 +559,6 @@ static int cs42xx8_runtime_resume(struct device *dev)
 	msleep(5);
 
 	regcache_cache_only(cs42xx8->regmap, false);
-	regcache_mark_dirty(cs42xx8->regmap);
 
 	ret = regcache_sync(cs42xx8->regmap);
 	if (ret) {

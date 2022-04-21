@@ -43,7 +43,6 @@
 
 #define MCASP_MAX_AFIFO_DEPTH	64
 
-#ifdef CONFIG_PM
 static u32 context_regs[] = {
 	DAVINCI_MCASP_TXFMCTL_REG,
 	DAVINCI_MCASP_RXFMCTL_REG,
@@ -66,7 +65,6 @@ struct davinci_mcasp_context {
 	u32	*xrsr_regs; /* for serializer configuration */
 	bool	pm_state;
 };
-#endif
 
 struct davinci_mcasp_ruledata {
 	struct davinci_mcasp *mcasp;
@@ -631,7 +629,7 @@ static int davinci_mcasp_ch_constraint(struct davinci_mcasp *mcasp, int stream,
 	if (mcasp->tdm_mask[stream])
 		slots = hweight32(mcasp->tdm_mask[stream]);
 
-	for (i = 2; i <= slots; i++)
+	for (i = 1; i <= slots; i++)
 		list[count++] = i;
 
 	for (i = 2; i <= serializers; i++)
@@ -1299,7 +1297,7 @@ static int davinci_mcasp_startup(struct snd_pcm_substream *substream,
 
 	snd_pcm_hw_constraint_minmax(substream->runtime,
 				     SNDRV_PCM_HW_PARAM_CHANNELS,
-				     2, max_channels);
+				     0, max_channels);
 
 	snd_pcm_hw_constraint_list(substream->runtime,
 				   0, SNDRV_PCM_HW_PARAM_CHANNELS,
@@ -1461,13 +1459,13 @@ static struct snd_soc_dai_driver davinci_mcasp_dai[] = {
 		.suspend	= davinci_mcasp_suspend,
 		.resume		= davinci_mcasp_resume,
 		.playback	= {
-			.channels_min	= 2,
+			.channels_min	= 1,
 			.channels_max	= 32 * 16,
 			.rates 		= DAVINCI_MCASP_RATES,
 			.formats	= DAVINCI_MCASP_PCM_FMTS,
 		},
 		.capture 	= {
-			.channels_min 	= 2,
+			.channels_min 	= 1,
 			.channels_max	= 32 * 16,
 			.rates 		= DAVINCI_MCASP_RATES,
 			.formats	= DAVINCI_MCASP_PCM_FMTS,
@@ -1604,8 +1602,6 @@ static struct davinci_mcasp_pdata *davinci_mcasp_set_pdata_from_of(
 		pdata = devm_kmemdup(&pdev->dev, match->data, sizeof(*pdata),
 				     GFP_KERNEL);
 		if (!pdata) {
-			dev_err(&pdev->dev,
-				"Failed to allocate memory for pdata\n");
 			ret = -ENOMEM;
 			return pdata;
 		}
@@ -1855,6 +1851,10 @@ static int davinci_mcasp_probe(struct platform_device *pdev)
 	mcasp->context.xrsr_regs = devm_kzalloc(&pdev->dev,
 					sizeof(u32) * mcasp->num_serializer,
 					GFP_KERNEL);
+	if (!mcasp->context.xrsr_regs) {
+		ret = -ENOMEM;
+		goto err;
+	}
 #endif
 	mcasp->serial_dir = pdata->serial_dir;
 	mcasp->version = pdata->version;
@@ -1973,12 +1973,12 @@ static int davinci_mcasp_probe(struct platform_device *pdev)
 	 */
 	mcasp->chconstr[SNDRV_PCM_STREAM_PLAYBACK].list =
 		devm_kzalloc(mcasp->dev, sizeof(unsigned int) *
-			     (32 + mcasp->num_serializer - 2),
+			     (32 + mcasp->num_serializer - 1),
 			     GFP_KERNEL);
 
 	mcasp->chconstr[SNDRV_PCM_STREAM_CAPTURE].list =
 		devm_kzalloc(mcasp->dev, sizeof(unsigned int) *
-			     (32 + mcasp->num_serializer - 2),
+			     (32 + mcasp->num_serializer - 1),
 			     GFP_KERNEL);
 
 	if (!mcasp->chconstr[SNDRV_PCM_STREAM_PLAYBACK].list ||

@@ -13,7 +13,7 @@
 #include <linux/slab.h>
 #include <linux/poll.h>
 #include <linux/pagemap.h>
-#include <linux/sched.h>
+#include <linux/sched/mm.h>
 #include <linux/fsnotify.h>
 
 #include "kernfs-internal.h"
@@ -348,9 +348,9 @@ static void kernfs_vma_open(struct vm_area_struct *vma)
 	kernfs_put_active(of->kn);
 }
 
-static int kernfs_vma_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
+static int kernfs_vma_fault(struct vm_fault *vmf)
 {
-	struct file *file = vma->vm_file;
+	struct file *file = vmf->vma->vm_file;
 	struct kernfs_open_file *of = kernfs_of(file);
 	int ret;
 
@@ -362,16 +362,15 @@ static int kernfs_vma_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 
 	ret = VM_FAULT_SIGBUS;
 	if (of->vm_ops->fault)
-		ret = of->vm_ops->fault(vma, vmf);
+		ret = of->vm_ops->fault(vmf);
 
 	kernfs_put_active(of->kn);
 	return ret;
 }
 
-static int kernfs_vma_page_mkwrite(struct vm_area_struct *vma,
-				   struct vm_fault *vmf)
+static int kernfs_vma_page_mkwrite(struct vm_fault *vmf)
 {
-	struct file *file = vma->vm_file;
+	struct file *file = vmf->vma->vm_file;
 	struct kernfs_open_file *of = kernfs_of(file);
 	int ret;
 
@@ -383,7 +382,7 @@ static int kernfs_vma_page_mkwrite(struct vm_area_struct *vma,
 
 	ret = 0;
 	if (of->vm_ops->page_mkwrite)
-		ret = of->vm_ops->page_mkwrite(vma, vmf);
+		ret = of->vm_ops->page_mkwrite(vmf);
 	else
 		file_update_time(file);
 
@@ -516,7 +515,7 @@ static int kernfs_fop_mmap(struct file *file, struct vm_area_struct *vma)
 		goto out_put;
 
 	rc = 0;
-	of->mmapped = 1;
+	of->mmapped = true;
 	of->vm_ops = vma->vm_ops;
 	vma->vm_ops = &kernfs_vm_ops;
 out_put:
@@ -617,7 +616,7 @@ static void kernfs_put_open_node(struct kernfs_node *kn,
 
 static int kernfs_fop_open(struct inode *inode, struct file *file)
 {
-	struct kernfs_node *kn = file->f_path.dentry->d_fsdata;
+	struct kernfs_node *kn = inode->i_private;
 	struct kernfs_root *root = kernfs_root(kn);
 	const struct kernfs_ops *ops;
 	struct kernfs_open_file *of;
@@ -769,7 +768,7 @@ static void kernfs_release_file(struct kernfs_node *kn,
 
 static int kernfs_fop_release(struct inode *inode, struct file *filp)
 {
-	struct kernfs_node *kn = filp->f_path.dentry->d_fsdata;
+	struct kernfs_node *kn = inode->i_private;
 	struct kernfs_open_file *of = kernfs_of(filp);
 
 	if (kn->flags & KERNFS_HAS_RELEASE) {
@@ -833,35 +832,26 @@ void kernfs_drain_open_files(struct kernfs_node *kn)
  * to see if it supports poll (Neither 'poll' nor 'select' return
  * an appropriate error code).  When in doubt, set a suitable timeout value.
  */
-unsigned int kernfs_generic_poll(struct kernfs_open_file *of, poll_table *wait)
-{
-	struct kernfs_node *kn = of->file->f_path.dentry->d_fsdata;
-	struct kernfs_open_node *on = kn->attr.open;
-
-	poll_wait(of->file, &on->poll, wait);
-
-	if (of->event != atomic_read(&on->event))
-		return DEFAULT_POLLMASK|POLLERR|POLLPRI;
-
-	return DEFAULT_POLLMASK;
-}
-
 static unsigned int kernfs_fop_poll(struct file *filp, poll_table *wait)
 {
 	struct kernfs_open_file *of = kernfs_of(filp);
-	struct kernfs_node *kn = filp->f_path.dentry->d_fsdata;
-	unsigned int ret;
+	struct kernfs_node *kn = kernfs_dentry_node(filp->f_path.dentry);
+	struct kernfs_open_node *on = kn->attr.open;
 
 	if (!kernfs_get_active(kn))
-		return DEFAULT_POLLMASK|POLLERR|POLLPRI;
+		goto trigger;
 
-	if (kn->attr.ops->poll)
-		ret = kn->attr.ops->poll(of, wait);
-	else
-		ret = kernfs_generic_poll(of, wait);
+	poll_wait(filp, &on->poll, wait);
 
 	kernfs_put_active(kn);
-	return ret;
+
+	if (of->event != atomic_read(&on->event))
+		goto trigger;
+
+	return DEFAULT_POLLMASK;
+
+ trigger:
+	return DEFAULT_POLLMASK|POLLERR|POLLPRI;
 }
 
 static void kernfs_notify_workfn(struct work_struct *work)
@@ -905,7 +895,7 @@ repeat:
 		 * have the matching @file available.  Look up the inodes
 		 * and generate the events manually.
 		 */
-		inode = ilookup(info->sb, kn->ino);
+		inode = ilookup(info->sb, kn->id.ino);
 		if (!inode)
 			continue;
 
@@ -913,7 +903,7 @@ repeat:
 		if (parent) {
 			struct inode *p_inode;
 
-			p_inode = ilookup(info->sb, parent->ino);
+			p_inode = ilookup(info->sb, parent->id.ino);
 			if (p_inode) {
 				fsnotify(p_inode, FS_MODIFY | FS_EVENT_ON_CHILD,
 					 inode, FSNOTIFY_EVENT_INODE, kn->name, 0);
@@ -1007,7 +997,7 @@ struct kernfs_node *__kernfs_create_file(struct kernfs_node *parent,
 
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 	if (key) {
-		lockdep_init_map(&kn->dep_map, "s_active", key, 0);
+		lockdep_init_map(&kn->dep_map, "kn->count", key, 0);
 		kn->flags |= KERNFS_LOCKDEP;
 	}
 #endif

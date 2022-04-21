@@ -102,6 +102,16 @@ int platform_get_irq(struct platform_device *dev, unsigned int num)
 	}
 
 	r = platform_get_resource(dev, IORESOURCE_IRQ, num);
+	if (has_acpi_companion(&dev->dev)) {
+		if (r && r->flags & IORESOURCE_DISABLED) {
+			int ret;
+
+			ret = acpi_irq_get(ACPI_HANDLE(&dev->dev), num, r);
+			if (ret)
+				return ret;
+		}
+	}
+
 	/*
 	 * The resources may pass trigger flags to the irqs that need
 	 * to be set up. It so happens that the trigger flags for
@@ -334,7 +344,7 @@ EXPORT_SYMBOL_GPL(platform_device_add_data);
  * platform device is released.
  */
 int platform_device_add_properties(struct platform_device *pdev,
-				   struct property_entry *properties)
+				   const struct property_entry *properties)
 {
 	return device_add_properties(&pdev->dev, properties);
 }
@@ -396,7 +406,7 @@ int platform_device_add(struct platform_device *pdev)
 		}
 
 		if (p && insert_resource(p, r)) {
-			dev_err(&pdev->dev, "failed to claim resource %d\n", i);
+			dev_err(&pdev->dev, "failed to claim resource %d: %pR\n", i, r);
 			ret = -EBUSY;
 			goto failed;
 		}
@@ -455,13 +465,6 @@ void platform_device_del(struct platform_device *pdev)
 	}
 }
 EXPORT_SYMBOL_GPL(platform_device_del);
-#ifdef CONFIG_MTPROF
-#include "bootprof.h"
-#else
-#define TIME_LOG_START()
-#define TIME_LOG_END()
-#define bootprof_pdev_register(ts, pdev)
-#endif
 
 /**
  * platform_device_register - add a platform-level device
@@ -469,18 +472,9 @@ EXPORT_SYMBOL_GPL(platform_device_del);
  */
 int platform_device_register(struct platform_device *pdev)
 {
-	int ret;
-#ifdef CONFIG_MTPROF
-	unsigned long long ts = 0;
-#endif
-	TIME_LOG_START();
-
 	device_initialize(&pdev->dev);
 	arch_setup_pdev_archdata(pdev);
-	ret = platform_device_add(pdev);
-	TIME_LOG_END();
-	bootprof_pdev_register(ts, pdev);
-	return ret;
+	return platform_device_add(pdev);
 }
 EXPORT_SYMBOL_GPL(platform_device_register);
 
@@ -853,7 +847,7 @@ static ssize_t modalias_show(struct device *dev, struct device_attribute *a,
 	struct platform_device	*pdev = to_platform_device(dev);
 	int len;
 
-	len = of_device_get_modalias(dev, buf, PAGE_SIZE -1);
+	len = of_device_modalias(dev, buf, PAGE_SIZE);
 	if (len != -ENODEV)
 		return len;
 

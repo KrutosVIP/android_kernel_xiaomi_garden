@@ -152,7 +152,7 @@ struct netem_skb_cb {
 
 static struct sk_buff *netem_rb_to_skb(struct rb_node *rb)
 {
-	return container_of(rb, struct sk_buff, rbnode);
+	return rb_entry(rb, struct sk_buff, rbnode);
 }
 
 static inline struct netem_skb_cb *netem_skb_cb(struct sk_buff *skb)
@@ -441,10 +441,6 @@ static int netem_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	int nb = 0;
 	int count = 1;
 	int rc = NET_XMIT_SUCCESS;
-	int rc_drop = NET_XMIT_DROP;
-
-	/* Do not fool qdisc_drop_all() */
-	skb->prev = NULL;
 
 	/* Random duplication */
 	if (q->duplicate && q->duplicate >= get_crandom(&q->dup_cor))
@@ -481,7 +477,6 @@ static int netem_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 		q->duplicate = 0;
 		rootq->enqueue(skb2, rootq, to_free);
 		q->duplicate = dupsave;
-		rc_drop = NET_XMIT_SUCCESS;
 	}
 
 	/*
@@ -494,7 +489,7 @@ static int netem_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 		if (skb_is_gso(skb)) {
 			segs = netem_segment(skb, sch, to_free);
 			if (!segs)
-				return rc_drop;
+				return NET_XMIT_DROP;
 		} else {
 			segs = skb;
 		}
@@ -517,10 +512,8 @@ static int netem_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 			1<<(prandom_u32() % 8);
 	}
 
-	if (unlikely(sch->q.qlen >= sch->limit)) {
-		qdisc_drop_all(skb, sch, to_free);
-		return rc_drop;
-	}
+	if (unlikely(sch->q.qlen >= sch->limit))
+		return qdisc_drop_all(skb, sch, to_free);
 
 	qdisc_qstats_backlog_inc(sch, skb);
 
@@ -643,8 +636,8 @@ deliver:
 			 * If it's at ingress let's pretend the delay is
 			 * from the network (tstamp will be updated).
 			 */
-			if (G_TC_FROM(skb->tc_verd) & AT_INGRESS)
-				skb->tstamp.tv64 = 0;
+			if (skb->tc_redirected && skb->tc_from_ingress)
+				skb->tstamp = 0;
 #endif
 
 			if (q->qdisc) {
@@ -709,15 +702,11 @@ static int get_dist_table(struct Qdisc *sch, const struct nlattr *attr)
 	spinlock_t *root_lock;
 	struct disttable *d;
 	int i;
-	size_t s;
 
 	if (n > NETEM_DIST_MAX)
 		return -EINVAL;
 
-	s = sizeof(struct disttable) + n * sizeof(s16);
-	d = kmalloc(s, GFP_KERNEL | __GFP_NOWARN);
-	if (!d)
-		d = vmalloc(s);
+	d = kvmalloc(sizeof(struct disttable) + n * sizeof(s16), GFP_KERNEL);
 	if (!d)
 		return -ENOMEM;
 
@@ -850,7 +839,7 @@ static int parse_attr(struct nlattr *tb[], int maxtype, struct nlattr *nla,
 
 	if (nested_len >= nla_attr_size(0))
 		return nla_parse(tb, maxtype, nla_data(nla) + NLA_ALIGN(len),
-				 nested_len, policy);
+				 nested_len, policy, NULL);
 
 	memset(tb, 0, sizeof(struct nlattr *) * (maxtype + 1));
 	return 0;
@@ -1107,13 +1096,9 @@ static struct Qdisc *netem_leaf(struct Qdisc *sch, unsigned long arg)
 	return q->qdisc;
 }
 
-static unsigned long netem_get(struct Qdisc *sch, u32 classid)
+static unsigned long netem_find(struct Qdisc *sch, u32 classid)
 {
 	return 1;
-}
-
-static void netem_put(struct Qdisc *sch, unsigned long arg)
-{
 }
 
 static void netem_walk(struct Qdisc *sch, struct qdisc_walker *walker)
@@ -1131,8 +1116,7 @@ static void netem_walk(struct Qdisc *sch, struct qdisc_walker *walker)
 static const struct Qdisc_class_ops netem_class_ops = {
 	.graft		=	netem_graft,
 	.leaf		=	netem_leaf,
-	.get		=	netem_get,
-	.put		=	netem_put,
+	.find		=	netem_find,
 	.walk		=	netem_walk,
 	.dump		=	netem_dump_class,
 };

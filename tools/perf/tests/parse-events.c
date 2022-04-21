@@ -1,4 +1,4 @@
-
+// SPDX-License-Identifier: GPL-2.0
 #include "parse-events.h"
 #include "evsel.h"
 #include "evlist.h"
@@ -6,37 +6,18 @@
 #include "tests.h"
 #include "debug.h"
 #include "util.h"
+#include <dirent.h>
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <linux/kernel.h>
 #include <linux/hw_breakpoint.h>
 #include <api/fs/fs.h>
+#include <api/fs/tracing_path.h>
 
 #define PERF_TP_SAMPLE_TYPE (PERF_SAMPLE_RAW | PERF_SAMPLE_TIME | \
 			     PERF_SAMPLE_CPU | PERF_SAMPLE_PERIOD)
-
-#if defined(__s390x__)
-/* Return true if kvm module is available and loaded. Test this
- * and retun success when trace point kvm_s390_create_vm
- * exists. Otherwise this test always fails.
- */
-static bool kvm_s390_create_vm_valid(void)
-{
-	char *eventfile;
-	bool rc = false;
-
-	eventfile = get_events_file("kvm-s390");
-
-	if (eventfile) {
-		DIR *mydir = opendir(eventfile);
-
-		if (mydir) {
-			rc = true;
-			closedir(mydir);
-		}
-		put_events_file(eventfile);
-	}
-
-	return rc;
-}
-#endif
 
 static int test__checkevent_tracepoint(struct perf_evlist *evlist)
 {
@@ -1619,7 +1600,6 @@ static struct evlist_test test__events[] = {
 	{
 		.name  = "kvm-s390:kvm_s390_create_vm",
 		.check = test__checkevent_tracepoint,
-		.valid = kvm_s390_create_vm_valid,
 		.id    = 100,
 	},
 #endif
@@ -1831,18 +1811,7 @@ static int test_pmu_events(void)
 	return ret;
 }
 
-static void debug_warn(const char *warn, va_list params)
-{
-	char msg[1024];
-
-	if (!verbose)
-		return;
-
-	vsnprintf(msg, sizeof(msg), warn, params);
-	fprintf(stderr, " Warning: %s\n", msg);
-}
-
-int test__parse_events(int subtest __maybe_unused)
+int test__parse_events(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	int ret1, ret2 = 0;
 
@@ -1852,8 +1821,6 @@ do {							\
 	if (!ret2)					\
 		ret2 = ret1;				\
 } while (0)
-
-	set_warning_routine(debug_warn);
 
 	TEST_EVENTS(test__events);
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 #
 # Makefile for the linux kernel.
 #
@@ -12,10 +13,7 @@ CFLAGS_REMOVE_patch.o = -pg
 endif
 
 CFLAGS_REMOVE_return_address.o = -pg
-ccflags-y += -I$(srctree)/drivers/misc/mediatek/include/
-ccflags-y += -I$(srctree)/drivers/misc/mediatek/mtprof/
-ccflags-y += -Ikernel/sched/
-ccflags-y += -I$(srctree)/drivers/misc/mediatek/base/power/$(MTK_PLATFORM)/
+
 # Object file lists.
 
 obj-y		:= elf.o entry-common.o irq.o opcodes.o \
@@ -33,7 +31,6 @@ else
 obj-y		+= entry-armv.o
 endif
 
-obj-$(CONFIG_MMU)		+= bugs.o
 obj-$(CONFIG_CPU_IDLE)		+= cpuidle.o
 obj-$(CONFIG_ISA_DMA_API)	+= dma.o
 obj-$(CONFIG_FIQ)		+= fiq.o fiqasm.o

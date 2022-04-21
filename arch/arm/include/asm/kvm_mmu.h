@@ -28,13 +28,6 @@
  */
 #define kern_hyp_va(kva)	(kva)
 
-/* Contrary to arm64, there is no need to generate a PC-relative address */
-#define hyp_symbol_addr(s)						\
-	({								\
-		typeof(s) *addr = &(s);					\
-		addr;							\
-	})
-
 /*
  * KVM_MMU_CACHE_MIN_PAGES is the number of stage2 page table translation levels.
  */
@@ -63,7 +56,6 @@ void kvm_mmu_free_memory_caches(struct kvm_vcpu *vcpu);
 
 phys_addr_t kvm_mmu_get_httbr(void);
 phys_addr_t kvm_get_idmap_vector(void);
-phys_addr_t kvm_get_idmap_start(void);
 int kvm_mmu_init(void);
 void kvm_clear_hyp_idmap(void);
 
@@ -136,8 +128,7 @@ static inline bool vcpu_has_cache_enabled(struct kvm_vcpu *vcpu)
 
 static inline void __coherent_cache_guest_page(struct kvm_vcpu *vcpu,
 					       kvm_pfn_t pfn,
-					       unsigned long size,
-					       bool ipa_uncached)
+					       unsigned long size)
 {
 	/*
 	 * If we are going to insert an instruction page and the icache is
@@ -248,36 +239,10 @@ static inline int kvm_read_guest_lock(struct kvm *kvm,
 
 static inline void *kvm_get_hyp_vector(void)
 {
-	switch(read_cpuid_part()) {
-#ifdef CONFIG_HARDEN_BRANCH_PREDICTOR
-	case ARM_CPU_PART_CORTEX_A12:
-	case ARM_CPU_PART_CORTEX_A17:
-	{
-		extern char __kvm_hyp_vector_bp_inv[];
-		return kvm_ksym_ref(__kvm_hyp_vector_bp_inv);
-	}
-
-	case ARM_CPU_PART_BRAHMA_B15:
-	case ARM_CPU_PART_CORTEX_A15:
-	{
-		extern char __kvm_hyp_vector_ic_inv[];
-		return kvm_ksym_ref(__kvm_hyp_vector_ic_inv);
-	}
-#endif
-	default:
-	{
-		extern char __kvm_hyp_vector[];
-		return kvm_ksym_ref(__kvm_hyp_vector);
-	}
-	}
+	return kvm_ksym_ref(__kvm_hyp_vector);
 }
 
 static inline int kvm_map_vectors(void)
-{
-	return 0;
-}
-
-static inline int hyp_map_aux_data(void)
 {
 	return 0;
 }

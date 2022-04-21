@@ -2580,7 +2580,7 @@ int ocfs2_xattr_remove(struct inode *inode, struct buffer_head *di_bh)
 	if (!(oi->ip_dyn_features & OCFS2_HAS_XATTR_FL))
 		return 0;
 
-	if (OCFS2_I(inode)->ip_dyn_features & OCFS2_HAS_REFCOUNT_FL) {
+	if (ocfs2_is_refcount_inode(inode)) {
 		ret = ocfs2_lock_refcount_tree(OCFS2_SB(inode->i_sb),
 					       le64_to_cpu(di->i_refcount_loc),
 					       1, &ref_tree, &ref_root_bh);
@@ -3613,7 +3613,7 @@ int ocfs2_xattr_set(struct inode *inode,
 	}
 
 	/* Check whether the value is refcounted and do some preparation. */
-	if (OCFS2_I(inode)->ip_dyn_features & OCFS2_HAS_REFCOUNT_FL &&
+	if (ocfs2_is_refcount_inode(inode) &&
 	    (!xis.not_found || !xbs.not_found)) {
 		ret = ocfs2_prepare_refcount_xattr(inode, di, &xi,
 						   &xis, &xbs, &ref_tree,
@@ -3832,6 +3832,7 @@ static int ocfs2_xattr_bucket_find(struct inode *inode,
 	u16 blk_per_bucket = ocfs2_blocks_per_xattr_bucket(inode->i_sb);
 	int low_bucket = 0, bucket, high_bucket;
 	struct ocfs2_xattr_bucket *search;
+	u32 last_hash;
 	u64 blkno, lower_blkno = 0;
 
 	search = ocfs2_xattr_bucket_new(inode);
@@ -3874,6 +3875,8 @@ static int ocfs2_xattr_bucket_find(struct inode *inode,
 		 */
 		if (xh->xh_count)
 			xe = &xh->xh_entries[le16_to_cpu(xh->xh_count) - 1];
+
+		last_hash = le32_to_cpu(xe->xe_name_hash);
 
 		/* record lower_blkno which may be the insert place. */
 		lower_blkno = blkno;
@@ -6799,7 +6802,7 @@ static int ocfs2_lock_reflink_xattr_rec_allocators(
 		*credits += 1;
 
 	/* count in the xattr tree change. */
-	num_free_extents = ocfs2_num_free_extents(osb, xt_et);
+	num_free_extents = ocfs2_num_free_extents(xt_et);
 	if (num_free_extents < 0) {
 		ret = num_free_extents;
 		mlog_errno(ret);

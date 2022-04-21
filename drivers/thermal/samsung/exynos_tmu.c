@@ -598,7 +598,6 @@ static int exynos5433_tmu_initialize(struct platform_device *pdev)
 		threshold_code = temp_to_code(data, temp);
 
 		rising_threshold = readl(data->base + rising_reg_offset);
-		rising_threshold &= ~(0xff << j * 8);
 		rising_threshold |= (threshold_code << j * 8);
 		writel(rising_threshold, data->base + rising_reg_offset);
 
@@ -1177,7 +1176,6 @@ static int exynos_of_sensor_conf(struct device_node *np,
 	pdata->default_temp_offset = (u8)value;
 
 	of_property_read_u32(np, "samsung,tmu_cal_type", &pdata->cal_type);
-	of_property_read_u32(np, "samsung,tmu_cal_mode", &pdata->cal_mode);
 
 	of_node_put(np);
 	return 0;
@@ -1296,7 +1294,7 @@ static int exynos_map_dt_data(struct platform_device *pdev)
 	return 0;
 }
 
-static struct thermal_zone_of_device_ops exynos_sensor_ops = {
+static const struct thermal_zone_of_device_ops exynos_sensor_ops = {
 	.get_temp = exynos_get_temp,
 	.set_emul_temp = exynos_tmu_set_emulation,
 };

@@ -1204,7 +1204,10 @@ static int xadc_probe(struct platform_device *pdev)
 		ret = PTR_ERR(xadc->clk);
 		goto err_free_samplerate_trigger;
 	}
-	clk_prepare_enable(xadc->clk);
+
+	ret = clk_prepare_enable(xadc->clk);
+	if (ret)
+		goto err_free_samplerate_trigger;
 
 	ret = xadc->ops->setup(pdev, indio_dev, irq);
 	if (ret)
@@ -1299,7 +1302,7 @@ static int xadc_remove(struct platform_device *pdev)
 	}
 	free_irq(irq, indio_dev);
 	clk_disable_unprepare(xadc->clk);
-	cancel_delayed_work_sync(&xadc->zynq_unmask_work);
+	cancel_delayed_work(&xadc->zynq_unmask_work);
 	kfree(xadc->data);
 	kfree(indio_dev->channels);
 

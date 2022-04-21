@@ -16,19 +16,19 @@
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_panel.h>
+#include <drm/drm_of.h>
 #include <linux/clk.h>
 #include <linux/component.h>
+#include <linux/iopoll.h>
 #include <linux/irq.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
-#include <linux/of_graph.h>
 #include <linux/phy/phy.h>
 #include <linux/platform_device.h>
 #include <video/mipi_display.h>
 #include <video/videomode.h>
 
 #include "mtk_drm_ddp_comp.h"
-#include "mtk_drm_crtc.h"
 
 #define DSI_START		0x00
 
@@ -751,12 +751,6 @@ static void mtk_dsi_encoder_enable(struct drm_encoder *encoder)
 	mtk_output_dsi_enable(dsi);
 }
 
-static enum drm_connector_status mtk_dsi_connector_detect(
-	struct drm_connector *connector, bool force)
-{
-	return connector_status_connected;
-}
-
 static int mtk_dsi_connector_get_modes(struct drm_connector *connector)
 {
 	struct mtk_dsi *dsi = connector_to_dsi(connector);
@@ -764,28 +758,14 @@ static int mtk_dsi_connector_get_modes(struct drm_connector *connector)
 	return drm_panel_get_modes(dsi->panel);
 }
 
-static int mtk_dsi_atomic_check(struct drm_encoder *encoder,
-				struct drm_crtc_state *crtc_state,
-				struct drm_connector_state *conn_state)
-{
-	struct mtk_drm_crtc *mtk_crtc = container_of(conn_state->crtc,
-						     struct mtk_drm_crtc, base);
-	mtk_crtc->bpc = conn_state->connector->display_info.bpc;
-
-	return 0;
-}
-
 static const struct drm_encoder_helper_funcs mtk_dsi_encoder_helper_funcs = {
 	.mode_fixup = mtk_dsi_encoder_mode_fixup,
 	.mode_set = mtk_dsi_encoder_mode_set,
 	.disable = mtk_dsi_encoder_disable,
 	.enable = mtk_dsi_encoder_enable,
-	.atomic_check = mtk_dsi_atomic_check,
 };
 
 static const struct drm_connector_funcs mtk_dsi_connector_funcs = {
-	.dpms = drm_atomic_helper_connector_dpms,
-	.detect = mtk_dsi_connector_detect,
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.destroy = drm_connector_cleanup,
 	.reset = drm_atomic_helper_connector_reset,
@@ -797,26 +777,6 @@ static const struct drm_connector_helper_funcs
 	mtk_dsi_connector_helper_funcs = {
 	.get_modes = mtk_dsi_connector_get_modes,
 };
-
-static int mtk_drm_attach_bridge(struct drm_bridge *bridge,
-				 struct drm_encoder *encoder)
-{
-	int ret;
-
-	if (!bridge)
-		return -ENOENT;
-
-	encoder->bridge = bridge;
-	bridge->encoder = encoder;
-	ret = drm_bridge_attach(encoder->dev, bridge);
-	if (ret) {
-		DRM_ERROR("Failed to attach bridge to drm\n");
-		encoder->bridge = NULL;
-		bridge->encoder = NULL;
-	}
-
-	return ret;
-}
 
 static int mtk_dsi_create_connector(struct drm_device *drm, struct mtk_dsi *dsi)
 {
@@ -868,8 +828,10 @@ static int mtk_dsi_create_conn_enc(struct drm_device *drm, struct mtk_dsi *dsi)
 	dsi->encoder.possible_crtcs = 1;
 
 	/* If there's a bridge, attach to it and let it create the connector */
-	ret = mtk_drm_attach_bridge(dsi->bridge, &dsi->encoder);
+	ret = drm_bridge_attach(&dsi->encoder, dsi->bridge, NULL);
 	if (ret) {
+		DRM_ERROR("Failed to attach bridge to drm\n");
+
 		/* Otherwise create our own connector and attach to a panel */
 		ret = mtk_dsi_create_connector(drm, dsi);
 		if (ret)
@@ -889,8 +851,6 @@ static void mtk_dsi_destroy_conn_enc(struct mtk_dsi *dsi)
 	/* Skip connector cleanup if creation was delegated to the bridge */
 	if (dsi->conn.dev)
 		drm_connector_cleanup(&dsi->conn);
-	if (dsi->panel)
-		drm_panel_detach(dsi->panel);
 }
 
 static void mtk_dsi_ddp_start(struct mtk_ddp_comp *comp)
@@ -940,16 +900,12 @@ static int mtk_dsi_host_detach(struct mipi_dsi_host *host,
 
 static void mtk_dsi_wait_for_idle(struct mtk_dsi *dsi)
 {
-	u32 timeout_ms = 500000; /* total 1s ~ 2s timeout */
+	int ret;
+	u32 val;
 
-	while (timeout_ms--) {
-		if (!(readl(dsi->regs + DSI_INTSTA) & DSI_BUSY))
-			break;
-
-		usleep_range(2, 4);
-	}
-
-	if (timeout_ms == 0) {
+	ret = readl_poll_timeout(dsi->regs + DSI_INTSTA, val, !(val & DSI_BUSY),
+				 4, 2000000);
+	if (ret) {
 		DRM_WARN("polling dsi wait not busy timeout!\n");
 
 		mtk_dsi_enable(dsi);
@@ -973,7 +929,7 @@ static u32 mtk_dsi_recv_cnt(u8 type, u8 *read_data)
 		DRM_INFO("type is 0x02, try again\n");
 		break;
 	default:
-		DRM_INFO("type(0x%x) cannot be non-recognite\n", type);
+		DRM_INFO("type(0x%x) not recognized\n", type);
 		break;
 	}
 
@@ -1091,8 +1047,8 @@ static int mtk_dsi_bind(struct device *dev, struct device *master, void *data)
 
 	ret = mtk_ddp_comp_register(drm, &dsi->ddp_comp);
 	if (ret < 0) {
-		dev_err(dev, "Failed to register component %s: %d\n",
-			dev->of_node->full_name, ret);
+		dev_err(dev, "Failed to register component %pOF: %d\n",
+			dev->of_node, ret);
 		return ret;
 	}
 
@@ -1137,7 +1093,6 @@ static int mtk_dsi_probe(struct platform_device *pdev)
 {
 	struct mtk_dsi *dsi;
 	struct device *dev = &pdev->dev;
-	struct device_node *remote_node, *endpoint;
 	struct resource *regs;
 	int irq_num;
 	int comp_id;
@@ -1150,22 +1105,10 @@ static int mtk_dsi_probe(struct platform_device *pdev)
 	dsi->host.ops = &mtk_dsi_ops;
 	dsi->host.dev = dev;
 
-	endpoint = of_graph_get_next_endpoint(dev->of_node, NULL);
-	if (endpoint) {
-		remote_node = of_graph_get_remote_port_parent(endpoint);
-		if (!remote_node) {
-			dev_err(dev, "No panel connected\n");
-			return -ENODEV;
-		}
-
-		dsi->bridge = of_drm_find_bridge(remote_node);
-		dsi->panel = of_drm_find_panel(remote_node);
-		of_node_put(remote_node);
-		if (!dsi->bridge && !dsi->panel) {
-			dev_info(dev, "Waiting for bridge or panel driver\n");
-			return -EPROBE_DEFER;
-		}
-	}
+	ret = drm_of_find_panel_or_bridge(dev->of_node, 0, 0,
+					  &dsi->panel, &dsi->bridge);
+	if (ret)
+		return ret;
 
 	dsi->engine_clk = devm_clk_get(dev, "engine");
 	if (IS_ERR(dsi->engine_clk)) {

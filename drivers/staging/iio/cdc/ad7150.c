@@ -6,7 +6,6 @@
  * Licensed under the GPL-2 or later.
  */
 
-#include <linux/bitfield.h>
 #include <linux/interrupt.h>
 #include <linux/device.h>
 #include <linux/kernel.h>
@@ -130,7 +129,7 @@ static int ad7150_read_event_config(struct iio_dev *indio_dev,
 {
 	int ret;
 	u8 threshtype;
-	bool thrfixed;
+	bool adaptive;
 	struct ad7150_chip_info *chip = iio_priv(indio_dev);
 
 	ret = i2c_smbus_read_byte_data(chip->client, AD7150_CFG);
@@ -138,23 +137,21 @@ static int ad7150_read_event_config(struct iio_dev *indio_dev,
 		return ret;
 
 	threshtype = (ret >> 5) & 0x03;
-
-	/*check if threshold mode is fixed or adaptive*/
-	thrfixed = FIELD_GET(AD7150_CFG_FIX, ret);
+	adaptive = !!(ret & 0x80);
 
 	switch (type) {
 	case IIO_EV_TYPE_MAG_ADAPTIVE:
 		if (dir == IIO_EV_DIR_RISING)
-			return !thrfixed && (threshtype == 0x1);
-		return !thrfixed && (threshtype == 0x0);
+			return adaptive && (threshtype == 0x1);
+		return adaptive && (threshtype == 0x0);
 	case IIO_EV_TYPE_THRESH_ADAPTIVE:
 		if (dir == IIO_EV_DIR_RISING)
-			return !thrfixed && (threshtype == 0x3);
-		return !thrfixed && (threshtype == 0x2);
+			return adaptive && (threshtype == 0x3);
+		return adaptive && (threshtype == 0x2);
 	case IIO_EV_TYPE_THRESH:
 		if (dir == IIO_EV_DIR_RISING)
-			return thrfixed && (threshtype == 0x1);
-		return thrfixed && (threshtype == 0x0);
+			return !adaptive && (threshtype == 0x1);
+		return !adaptive && (threshtype == 0x0);
 	default:
 		break;
 	}
@@ -235,7 +232,7 @@ static int ad7150_write_event_config(struct iio_dev *indio_dev,
 	if (ret < 0)
 		goto error_ret;
 
-	cfg = ret & ~((0x03 << 5) | (0x1 << 7));
+	cfg = ret & ~((0x03 << 5) | BIT(7));
 
 	switch (type) {
 	case IIO_EV_TYPE_MAG_ADAPTIVE:
@@ -417,7 +414,7 @@ error_ret:
 
 #define AD7150_TIMEOUT(chan, type, dir, ev_type, ev_dir)		\
 	IIO_DEVICE_ATTR(in_capacitance##chan##_##type##_##dir##_timeout, \
-		S_IRUGO | S_IWUSR,					\
+		0644,							\
 		&ad7150_show_timeout,					\
 		&ad7150_store_timeout,					\
 		IIO_UNMOD_EVENT_CODE(IIO_CAPACITANCE,			\
@@ -565,7 +562,7 @@ static struct attribute *ad7150_event_attributes[] = {
 	NULL,
 };
 
-static struct attribute_group ad7150_event_attribute_group = {
+static const struct attribute_group ad7150_event_attribute_group = {
 	.attrs = ad7150_event_attributes,
 	.name = "events",
 };
@@ -613,27 +610,27 @@ static int ad7150_probe(struct i2c_client *client,
 
 	if (client->irq) {
 		ret = devm_request_threaded_irq(&client->dev, client->irq,
-					   NULL,
-					   &ad7150_event_handler,
-					   IRQF_TRIGGER_RISING |
-					   IRQF_TRIGGER_FALLING |
-					   IRQF_ONESHOT,
-					   "ad7150_irq1",
-					   indio_dev);
+						NULL,
+						&ad7150_event_handler,
+						IRQF_TRIGGER_RISING |
+						IRQF_TRIGGER_FALLING |
+						IRQF_ONESHOT,
+						"ad7150_irq1",
+						indio_dev);
 		if (ret)
 			return ret;
 	}
 
 	if (client->dev.platform_data) {
 		ret = devm_request_threaded_irq(&client->dev, *(unsigned int *)
-					   client->dev.platform_data,
-					   NULL,
-					   &ad7150_event_handler,
-					   IRQF_TRIGGER_RISING |
-					   IRQF_TRIGGER_FALLING |
-					   IRQF_ONESHOT,
-					   "ad7150_irq2",
-					   indio_dev);
+						client->dev.platform_data,
+						NULL,
+						&ad7150_event_handler,
+						IRQF_TRIGGER_RISING |
+						IRQF_TRIGGER_FALLING |
+						IRQF_ONESHOT,
+						"ad7150_irq2",
+						indio_dev);
 		if (ret)
 			return ret;
 	}

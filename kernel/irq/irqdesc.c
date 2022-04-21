@@ -4,7 +4,7 @@
  *
  * This file contains the interrupt descriptor management code
  *
- * Detailed information is available in Documentation/DocBook/genericirq
+ * Detailed information is available in Documentation/core-api/genericirq.rst
  *
  */
 #include <linux/irq.h>
@@ -19,10 +19,6 @@
 
 #include "internals.h"
 
-#ifdef CONFIG_MTK_SCHED_MONITOR
-#include "mtk_sched_mon.h"
-#endif
-
 /*
  * lockdep: we want to handle all irq_desc locks as a single lock-class:
  */
@@ -31,7 +27,7 @@ static struct lock_class_key irq_desc_lock_class;
 #if defined(CONFIG_SMP)
 static int __init irq_affinity_setup(char *str)
 {
-	zalloc_cpumask_var(&irq_default_affinity, GFP_NOWAIT);
+	alloc_bootmem_cpumask_var(&irq_default_affinity);
 	cpulist_parse(str, irq_default_affinity);
 	/*
 	 * Set at least the boot cpu. We don't want to end up with
@@ -44,10 +40,8 @@ __setup("irqaffinity=", irq_affinity_setup);
 
 static void __init init_irq_default_affinity(void)
 {
-#ifdef CONFIG_CPUMASK_OFFSTACK
-	if (!irq_default_affinity)
+	if (!cpumask_available(irq_default_affinity))
 		zalloc_cpumask_var(&irq_default_affinity, GFP_NOWAIT);
-#endif
 	if (cpumask_empty(irq_default_affinity))
 		cpumask_setall(irq_default_affinity);
 }
@@ -58,14 +52,25 @@ static void __init init_irq_default_affinity(void)
 #endif
 
 #ifdef CONFIG_SMP
-static int alloc_masks(struct irq_desc *desc, gfp_t gfp, int node)
+static int alloc_masks(struct irq_desc *desc, int node)
 {
 	if (!zalloc_cpumask_var_node(&desc->irq_common_data.affinity,
-				     gfp, node))
+				     GFP_KERNEL, node))
 		return -ENOMEM;
 
+#ifdef CONFIG_GENERIC_IRQ_EFFECTIVE_AFF_MASK
+	if (!zalloc_cpumask_var_node(&desc->irq_common_data.effective_affinity,
+				     GFP_KERNEL, node)) {
+		free_cpumask_var(desc->irq_common_data.affinity);
+		return -ENOMEM;
+	}
+#endif
+
 #ifdef CONFIG_GENERIC_PENDING_IRQ
-	if (!zalloc_cpumask_var_node(&desc->pending_mask, gfp, node)) {
+	if (!zalloc_cpumask_var_node(&desc->pending_mask, GFP_KERNEL, node)) {
+#ifdef CONFIG_GENERIC_IRQ_EFFECTIVE_AFF_MASK
+		free_cpumask_var(desc->irq_common_data.effective_affinity);
+#endif
 		free_cpumask_var(desc->irq_common_data.affinity);
 		return -ENOMEM;
 	}
@@ -90,7 +95,7 @@ static void desc_smp_init(struct irq_desc *desc, int node,
 
 #else
 static inline int
-alloc_masks(struct irq_desc *desc, gfp_t gfp, int node) { return 0; }
+alloc_masks(struct irq_desc *desc, int node) { return 0; }
 static inline void
 desc_smp_init(struct irq_desc *desc, int node, const struct cpumask *affinity) { }
 #endif
@@ -109,11 +114,11 @@ static void desc_set_defaults(unsigned int irq, struct irq_desc *desc, int node,
 	desc->irq_data.chip_data = NULL;
 	irq_settings_clr_and_set(desc, ~0, _IRQ_DEFAULT_INIT_FLAGS);
 	irqd_set(&desc->irq_data, IRQD_IRQ_DISABLED);
+	irqd_set(&desc->irq_data, IRQD_IRQ_MASKED);
 	desc->handle_irq = handle_bad_irq;
 	desc->depth = 1;
 	desc->irq_count = 0;
 	desc->irqs_unhandled = 0;
-	desc->tot_count = 0;
 	desc->name = NULL;
 	desc->owner = owner;
 	for_each_possible_cpu(cpu)
@@ -329,6 +334,9 @@ static void free_masks(struct irq_desc *desc)
 	free_cpumask_var(desc->pending_mask);
 #endif
 	free_cpumask_var(desc->irq_common_data.affinity);
+#ifdef CONFIG_GENERIC_IRQ_EFFECTIVE_AFF_MASK
+	free_cpumask_var(desc->irq_common_data.effective_affinity);
+#endif
 }
 #else
 static inline void free_masks(struct irq_desc *desc) { }
@@ -349,9 +357,8 @@ static struct irq_desc *alloc_desc(int irq, int node, unsigned int flags,
 				   struct module *owner)
 {
 	struct irq_desc *desc;
-	gfp_t gfp = GFP_KERNEL;
 
-	desc = kzalloc_node(sizeof(*desc), gfp, node);
+	desc = kzalloc_node(sizeof(*desc), GFP_KERNEL, node);
 	if (!desc)
 		return NULL;
 	/* allocate based on nr_cpu_ids */
@@ -359,11 +366,12 @@ static struct irq_desc *alloc_desc(int irq, int node, unsigned int flags,
 	if (!desc->kstat_irqs)
 		goto err_desc;
 
-	if (alloc_masks(desc, gfp, node))
+	if (alloc_masks(desc, node))
 		goto err_kstat;
 
 	raw_spin_lock_init(&desc->lock);
 	lockdep_set_class(&desc->lock, &irq_desc_lock_class);
+	mutex_init(&desc->request_mutex);
 	init_rcu_head(&desc->rcu);
 
 	desc_set_defaults(irq, desc, node, affinity, owner);
@@ -399,6 +407,7 @@ static void free_desc(unsigned int irq)
 {
 	struct irq_desc *desc = irq_to_desc(irq);
 
+	irq_remove_debugfs_entry(desc);
 	unregister_irq_proc(irq, desc);
 
 	/*
@@ -478,7 +487,8 @@ int __init early_irq_init(void)
 
 	/* Let arch update nr_irqs and return the nr of preallocated irqs */
 	initcnt = arch_probe_nr_irqs();
-	printk(KERN_INFO "NR_IRQS:%d nr_irqs:%d %d\n", NR_IRQS, nr_irqs, initcnt);
+	printk(KERN_INFO "NR_IRQS: %d, nr_irqs: %d, preallocated irqs: %d\n",
+	       NR_IRQS, nr_irqs, initcnt);
 
 	if (WARN_ON(nr_irqs > IRQ_BITMAP_BITS))
 		nr_irqs = IRQ_BITMAP_BITS;
@@ -514,14 +524,14 @@ int __init early_irq_init(void)
 
 	init_irq_default_affinity();
 
-	printk(KERN_INFO "NR_IRQS:%d\n", NR_IRQS);
+	printk(KERN_INFO "NR_IRQS: %d\n", NR_IRQS);
 
 	desc = irq_desc;
 	count = ARRAY_SIZE(irq_desc);
 
 	for (i = 0; i < count; i++) {
 		desc[i].kstat_irqs = alloc_percpu(unsigned int);
-		alloc_masks(&desc[i], GFP_KERNEL, node);
+		alloc_masks(&desc[i], node);
 		raw_spin_lock_init(&desc[i].lock);
 		lockdep_set_class(&desc[i].lock, &irq_desc_lock_class);
 		desc_set_defaults(i, &desc[i], node, NULL, NULL);
@@ -613,19 +623,12 @@ int __handle_domain_irq(struct irq_domain *domain, unsigned int hwirq,
 	struct pt_regs *old_regs = set_irq_regs(regs);
 	unsigned int irq = hwirq;
 	int ret = 0;
-#ifdef CONFIG_MTK_SCHED_TRACERS
-	//struct irq_desc *desc;
-#endif
 
 	irq_enter();
 
 #ifdef CONFIG_IRQ_DOMAIN
 	if (lookup)
 		irq = irq_find_mapping(domain, hwirq);
-#endif
-
-#ifdef CONFIG_MTK_SCHED_MONITOR
-	mt_trace_ISR_start(irq);
 #endif
 
 	/*
@@ -639,9 +642,6 @@ int __handle_domain_irq(struct irq_domain *domain, unsigned int hwirq,
 		generic_handle_irq(irq);
 	}
 
-#ifdef CONFIG_MTK_SCHED_MONITOR
-	mt_trace_ISR_end(irq);
-#endif
 	irq_exit();
 	set_irq_regs(old_regs);
 	return ret;
@@ -895,15 +895,11 @@ unsigned int kstat_irqs_cpu(unsigned int irq, int cpu)
 unsigned int kstat_irqs(unsigned int irq)
 {
 	struct irq_desc *desc = irq_to_desc(irq);
-	unsigned int sum = 0;
 	int cpu;
+	unsigned int sum = 0;
 
 	if (!desc || !desc->kstat_irqs)
 		return 0;
-	if (!irq_settings_is_per_cpu_devid(desc) &&
-	    !irq_settings_is_per_cpu(desc))
-	    return desc->tot_count;
-
 	for_each_possible_cpu(cpu)
 		sum += *per_cpu_ptr(desc->kstat_irqs, cpu);
 	return sum;

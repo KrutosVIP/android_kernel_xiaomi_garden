@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _ASMARM_BUG_H
 #define _ASMARM_BUG_H
 
@@ -33,12 +34,11 @@
 
 #define __BUG(__file, __line, __value)				\
 do {								\
-	asm volatile("nop\n\t"					\
-		"1:\t" BUG_INSTR(__value) "\n"  \
+	asm volatile("1:\t" BUG_INSTR(__value) "\n"  \
 		".pushsection .rodata.str, \"aMS\", %progbits, 1\n" \
 		"2:\t.asciz " #__file "\n" 			\
 		".popsection\n" 				\
-		".pushsection __bug_table,\"a\"\n"		\
+		".pushsection __bug_table,\"aw\"\n"		\
 		".align 2\n"					\
 		"3:\t.word 1b, 2b\n"				\
 		"\t.hword " #__line ", 0\n"			\
@@ -50,7 +50,7 @@ do {								\
 
 #define __BUG(__file, __line, __value)				\
 do {								\
-	asm volatile("nop\n\t" BUG_INSTR(__value) "\n");	\
+	asm volatile(BUG_INSTR(__value) "\n");			\
 	unreachable();						\
 } while (0)
 #endif  /* CONFIG_DEBUG_BUGVERBOSE */

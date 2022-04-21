@@ -331,34 +331,17 @@ struct inode_switch_wbs_context {
 	struct work_struct	work;
 };
 
-static void bdi_down_write_wb_switch_rwsem(struct backing_dev_info *bdi)
-{
-	down_write(&bdi->wb_switch_rwsem);
-}
-
-static void bdi_up_write_wb_switch_rwsem(struct backing_dev_info *bdi)
-{
-	up_write(&bdi->wb_switch_rwsem);
-}
-
 static void inode_switch_wbs_work_fn(struct work_struct *work)
 {
 	struct inode_switch_wbs_context *isw =
 		container_of(work, struct inode_switch_wbs_context, work);
 	struct inode *inode = isw->inode;
-	struct backing_dev_info *bdi = inode_to_bdi(inode);
 	struct address_space *mapping = inode->i_mapping;
 	struct bdi_writeback *old_wb = inode->i_wb;
 	struct bdi_writeback *new_wb = isw->new_wb;
 	struct radix_tree_iter iter;
 	bool switched = false;
 	void **slot;
-
-	/*
-	 * If @inode switches cgwb membership while sync_inodes_sb() is
-	 * being issued, sync_inodes_sb() might miss it.  Synchronize.
-	 */
-	down_read(&bdi->wb_switch_rwsem);
 
 	/*
 	 * By the time control reaches here, RCU grace period has passed
@@ -397,8 +380,8 @@ static void inode_switch_wbs_work_fn(struct work_struct *work)
 		struct page *page = radix_tree_deref_slot_protected(slot,
 							&mapping->tree_lock);
 		if (likely(page) && PageDirty(page)) {
-			__dec_wb_stat(old_wb, WB_RECLAIMABLE);
-			__inc_wb_stat(new_wb, WB_RECLAIMABLE);
+			dec_wb_stat(old_wb, WB_RECLAIMABLE);
+			inc_wb_stat(new_wb, WB_RECLAIMABLE);
 		}
 	}
 
@@ -408,8 +391,8 @@ static void inode_switch_wbs_work_fn(struct work_struct *work)
 							&mapping->tree_lock);
 		if (likely(page)) {
 			WARN_ON_ONCE(!PageWriteback(page));
-			__dec_wb_stat(old_wb, WB_WRITEBACK);
-			__inc_wb_stat(new_wb, WB_WRITEBACK);
+			dec_wb_stat(old_wb, WB_WRITEBACK);
+			inc_wb_stat(new_wb, WB_WRITEBACK);
 		}
 	}
 
@@ -452,8 +435,6 @@ skip_switch:
 	spin_unlock(&new_wb->list_lock);
 	spin_unlock(&old_wb->list_lock);
 
-	up_read(&bdi->wb_switch_rwsem);
-
 	if (switched) {
 		wb_wakeup(new_wb);
 		wb_put(old_wb);
@@ -494,18 +475,9 @@ static void inode_switch_wbs(struct inode *inode, int new_wb_id)
 	if (inode->i_state & I_WB_SWITCH)
 		return;
 
-	/*
-	 * Avoid starting new switches while sync_inodes_sb() is in
-	 * progress.  Otherwise, if the down_write protected issue path
-	 * blocks heavily, we might end up starting a large number of
-	 * switches which will block on the rwsem.
-	 */
-	if (!down_read_trylock(&bdi->wb_switch_rwsem))
-		return;
-
 	isw = kzalloc(sizeof(*isw), GFP_ATOMIC);
 	if (!isw)
-		goto out_unlock;
+		return;
 
 	/* find and pin the new wb */
 	rcu_read_lock();
@@ -530,6 +502,8 @@ static void inode_switch_wbs(struct inode *inode, int new_wb_id)
 
 	isw->inode = inode;
 
+	atomic_inc(&isw_nr_in_flight);
+
 	/*
 	 * In addition to synchronizing among switchers, I_WB_SWITCH tells
 	 * the RCU protected stat update paths to grab the mapping's
@@ -537,17 +511,12 @@ static void inode_switch_wbs(struct inode *inode, int new_wb_id)
 	 * Let's continue after I_WB_SWITCH is guaranteed to be visible.
 	 */
 	call_rcu(&isw->rcu_head, inode_switch_wbs_rcu_fn);
-
-	atomic_inc(&isw_nr_in_flight);
-
-	goto out_unlock;
+	return;
 
 out_free:
 	if (isw->new_wb)
 		wb_put(isw->new_wb);
 	kfree(isw);
-out_unlock:
-	up_read(&bdi->wb_switch_rwsem);
 }
 
 /**
@@ -721,7 +690,6 @@ void wbc_detach_inode(struct writeback_control *wbc)
 void wbc_account_io(struct writeback_control *wbc, struct page *page,
 		    size_t bytes)
 {
-	struct cgroup_subsys_state *css;
 	int id;
 
 	/*
@@ -733,12 +701,7 @@ void wbc_account_io(struct writeback_control *wbc, struct page *page,
 	if (!wbc->wb)
 		return;
 
-	css = mem_cgroup_css_from_page(page);
-	/* dead cgroups shouldn't contribute to inode ownership arbitration */
-	if (!(css->flags & CSS_ONLINE))
-		return;
-
-	id = css->id;
+	id = mem_cgroup_css_from_page(page)->id;
 
 	if (id == wbc->wb_id) {
 		wbc->wb_bytes += bytes;
@@ -915,11 +878,7 @@ restart:
 void cgroup_writeback_umount(void)
 {
 	if (atomic_read(&isw_nr_in_flight)) {
-		/*
-		 * Use rcu_barrier() to wait for all pending callbacks to
-		 * ensure that all in-flight wb switches are in the workqueue.
-		 */
-		rcu_barrier();
+		synchronize_rcu();
 		flush_workqueue(isw_wq);
 	}
 }
@@ -934,9 +893,6 @@ static int __init cgroup_writeback_init(void)
 fs_initcall(cgroup_writeback_init);
 
 #else	/* CONFIG_CGROUP_WRITEBACK */
-
-static void bdi_down_write_wb_switch_rwsem(struct backing_dev_info *bdi) { }
-static void bdi_up_write_wb_switch_rwsem(struct backing_dev_info *bdi) { }
 
 static struct bdi_writeback *
 locked_inode_to_wb_and_lock_list(struct inode *inode)
@@ -1828,15 +1784,13 @@ static long wb_writeback(struct bdi_writeback *wb,
 		 * become available for writeback. Otherwise
 		 * we'll just busyloop.
 		 */
-		if (!list_empty(&wb->b_more_io))  {
-			trace_writeback_wait(wb, work);
-			inode = wb_inode(wb->b_more_io.prev);
-			spin_lock(&inode->i_lock);
-			spin_unlock(&wb->list_lock);
-			/* This function drops i_lock... */
-			inode_sleep_on_writeback(inode);
-			spin_lock(&wb->list_lock);
-		}
+		trace_writeback_wait(wb, work);
+		inode = wb_inode(wb->b_more_io.prev);
+		spin_lock(&inode->i_lock);
+		spin_unlock(&wb->list_lock);
+		/* This function drops i_lock... */
+		inode_sleep_on_writeback(inode);
+		spin_lock(&wb->list_lock);
 	}
 	spin_unlock(&wb->list_lock);
 	blk_finish_plug(&plug);
@@ -2099,11 +2053,13 @@ static noinline void block_dump___mark_inode_dirty(struct inode *inode)
 }
 
 /**
- *	__mark_inode_dirty -	internal function
- *	@inode: inode to mark
- *	@flags: what kind of dirty (i.e. I_DIRTY_SYNC)
- *	Mark an inode as dirty. Callers should use mark_inode_dirty or
- *  	mark_inode_dirty_sync.
+ * __mark_inode_dirty -	internal function
+ *
+ * @inode: inode to mark
+ * @flags: what kind of dirty (i.e. I_DIRTY_SYNC)
+ *
+ * Mark an inode as dirty. Callers should use mark_inode_dirty or
+ * mark_inode_dirty_sync.
  *
  * Put the inode on the super block's dirty list.
  *
@@ -2452,11 +2408,8 @@ void sync_inodes_sb(struct super_block *sb)
 		return;
 	WARN_ON(!rwsem_is_locked(&sb->s_umount));
 
-	/* protect against inode wb switch, see inode_switch_wbs_work_fn() */
-	bdi_down_write_wb_switch_rwsem(bdi);
 	bdi_split_work_to_wbs(bdi, &work, false);
 	wb_wait_for_completion(bdi, &done);
-	bdi_up_write_wb_switch_rwsem(bdi);
 
 	wait_sb_inodes(sb);
 }

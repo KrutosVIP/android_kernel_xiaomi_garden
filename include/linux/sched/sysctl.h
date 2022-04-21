@@ -1,5 +1,10 @@
-#ifndef _SCHED_SYSCTL_H
-#define _SCHED_SYSCTL_H
+/* SPDX-License-Identifier: GPL-2.0 */
+#ifndef _LINUX_SCHED_SYSCTL_H
+#define _LINUX_SCHED_SYSCTL_H
+
+#include <linux/types.h>
+
+struct ctl_table;
 
 #ifdef CONFIG_DETECT_HUNG_TASK
 extern int	     sysctl_hung_task_check_count;
@@ -16,18 +21,16 @@ enum { sysctl_hung_task_timeout_secs = 0 };
 
 extern unsigned int sysctl_sched_latency;
 extern unsigned int sysctl_sched_min_granularity;
-extern unsigned int sysctl_sched_wakeup_granularity;
-extern unsigned int sysctl_sched_child_runs_first;
 extern unsigned int sysctl_sched_sync_hint_enable;
 extern unsigned int sysctl_sched_cstate_aware;
+extern unsigned int sysctl_sched_wakeup_granularity;
+extern unsigned int sysctl_sched_child_runs_first;
 #ifdef CONFIG_SCHED_WALT
 extern unsigned int sysctl_sched_use_walt_cpu_util;
 extern unsigned int sysctl_sched_use_walt_task_util;
 extern unsigned int sysctl_sched_walt_init_task_load_pct;
 extern unsigned int sysctl_sched_walt_cpu_high_irqload;
 #endif
-extern unsigned int sysctl_sched_isolation_hint_enable;
-extern unsigned int sysctl_sched_rotation_enable;
 
 enum sched_tunable_scaling {
 	SCHED_TUNABLESCALING_NONE,
@@ -43,10 +46,9 @@ extern unsigned int sysctl_numa_balancing_scan_period_max;
 extern unsigned int sysctl_numa_balancing_scan_size;
 
 #ifdef CONFIG_SCHED_DEBUG
-extern __read_mostly unsigned int sysctl_sched_migration_cost;
-extern __read_mostly unsigned int sysctl_sched_nr_migrate;
-extern __read_mostly unsigned int sysctl_sched_time_avg;
-extern unsigned int sysctl_sched_shares_window;
+extern unsigned int sysctl_sched_migration_cost;
+extern unsigned int sysctl_sched_nr_migrate;
+extern unsigned int sysctl_sched_time_avg;
 
 int sched_proc_update_handler(struct ctl_table *table, int write,
 		void __user *buffer, size_t *length,
@@ -66,34 +68,11 @@ extern int sysctl_sched_rt_runtime;
 extern unsigned int sysctl_sched_cfs_bandwidth_slice;
 #endif
 
-#ifdef CONFIG_SCHED_TUNE
-extern unsigned int sysctl_sched_cfs_boost;
-int sysctl_sched_cfs_boost_handler(struct ctl_table *table, int write,
-				   void __user *buffer, size_t *length,
-				   loff_t *ppos);
-static inline unsigned int get_sysctl_sched_cfs_boost(void)
-{
-	return sysctl_sched_cfs_boost;
-}
-
-#ifdef CONFIG_CGROUP_SCHEDTUNE
-extern int stune_task_threshold;
-extern int sched_stune_task_threshold_handler(struct ctl_table *table,
-					int write, void __user *buffer,
-					size_t *length, loff_t *ppos);
-#endif
-
-#else
-static inline unsigned int get_sysctl_sched_cfs_boost(void)
-{
-	return 0;
-}
-#endif
-
 #ifdef CONFIG_SCHED_AUTOGROUP
 extern unsigned int sysctl_sched_autogroup_enabled;
 #endif
 
+extern int sysctl_sched_rr_timeslice;
 extern int sched_rr_timeslice;
 
 extern int sched_rr_handler(struct ctl_table *table, int write,
@@ -112,4 +91,4 @@ extern int sysctl_schedstats(struct ctl_table *table, int write,
 				 void __user *buffer, size_t *lenp,
 				 loff_t *ppos);
 
-#endif /* _SCHED_SYSCTL_H */
+#endif /* _LINUX_SCHED_SYSCTL_H */

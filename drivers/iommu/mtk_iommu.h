@@ -32,23 +32,13 @@ struct mtk_iommu_suspend_reg {
 	u32				ctrl_reg;
 	u32				int_control0;
 	u32				int_main_control;
+	u32				ivrp_paddr;
 };
 
-struct mtk_iommu_client_priv {
-	struct list_head		client;
-	unsigned int			mtk_m4u_id;
-	struct device			*m4udev;
-};
-
-enum mtk_iommu_match_type {
-	m4u_mt8173,
-	m4u_mt2712,
-	iommu_mt6xxx_v0,
-};
-
-struct mtk_iommu_match_data {
-	enum mtk_iommu_match_type match_type;
-	int iommu_cnt;
+enum mtk_iommu_plat {
+	M4U_MT2701,
+	M4U_MT2712,
+	M4U_MT8173,
 };
 
 struct mtk_iommu_domain;
@@ -64,13 +54,22 @@ struct mtk_iommu_data {
 	struct iommu_group		*m4u_group;
 	struct mtk_smi_iommu		smi_imu;      /* SMI larb iommu info */
 	bool                            enable_4GB;
-	const struct mtk_iommu_match_data  *match_data;
+	bool				tlb_flush_active;
+
+	struct iommu_device		iommu;
+	enum mtk_iommu_plat		m4u_plat;
+
 	struct list_head		list;
 };
 
 static inline int compare_of(struct device *dev, void *data)
 {
 	return dev->of_node == data;
+}
+
+static inline void release_of(struct device *dev, void *data)
+{
+	of_node_put(data);
 }
 
 static inline int mtk_iommu_bind(struct device *dev)

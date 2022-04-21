@@ -212,40 +212,33 @@ static const char * const mtk_ddp_comp_stem[MTK_DDP_COMP_TYPE_MAX] = {
 };
 
 struct mtk_ddp_comp_match {
-	enum mtk_ddp_comp_id index;
 	enum mtk_ddp_comp_type type;
 	int alias_id;
 	const struct mtk_ddp_comp_funcs *funcs;
 };
 
 static const struct mtk_ddp_comp_match mtk_ddp_matches[DDP_COMPONENT_ID_MAX] = {
-	{ DDP_COMPONENT_AAL,		MTK_DISP_AAL,	0, &ddp_aal },
-	{ DDP_COMPONENT_AAL1,		MTK_DISP_AAL,	1, &ddp_aal },
-	{ DDP_COMPONENT_BLS,		MTK_DISP_BLS,	0, NULL },
-	{ DDP_COMPONENT_COLOR0,		MTK_DISP_COLOR,	0, NULL },
-	{ DDP_COMPONENT_COLOR1,		MTK_DISP_COLOR,	1, NULL },
-	{ DDP_COMPONENT_COLOR2,		MTK_DISP_COLOR,	2, NULL },
-	{ DDP_COMPONENT_DPI0,		MTK_DPI,	0, NULL },
-	{ DDP_COMPONENT_DPI1,		MTK_DPI,	1, NULL },
-	{ DDP_COMPONENT_DSI0,		MTK_DSI,	0, NULL },
-	{ DDP_COMPONENT_DSI1,		MTK_DSI,	1, NULL },
-	{ DDP_COMPONENT_GAMMA,		MTK_DISP_GAMMA,	0, &ddp_gamma },
-	{ DDP_COMPONENT_OD,		MTK_DISP_OD,	0, &ddp_od },
-	{ DDP_COMPONENT_OD1,		MTK_DISP_OD,	1, &ddp_od },
-	{ DDP_COMPONENT_OVL0,		MTK_DISP_OVL,	0, NULL },
-	{ DDP_COMPONENT_OVL1,		MTK_DISP_OVL,	1, NULL },
-	{ DDP_COMPONENT_OVL2,		MTK_DISP_OVL,	2, NULL },
-	{ DDP_COMPONENT_PWM0,		MTK_DISP_PWM,	0, NULL },
-	{ DDP_COMPONENT_PWM1,		MTK_DISP_PWM,	1, NULL },
-	{ DDP_COMPONENT_RDMA0,		MTK_DISP_RDMA,	0, NULL },
-	{ DDP_COMPONENT_RDMA1,		MTK_DISP_RDMA,	1, NULL },
-	{ DDP_COMPONENT_RDMA2,		MTK_DISP_RDMA,	2, NULL },
-	{ DDP_COMPONENT_UFOE,		MTK_DISP_UFOE,	0, &ddp_ufoe },
-	{ DDP_COMPONENT_WDMA0,		MTK_DISP_WDMA,	0, NULL },
-	{ DDP_COMPONENT_WDMA1,		MTK_DISP_WDMA,	1, NULL },
+	[DDP_COMPONENT_AAL]	= { MTK_DISP_AAL,	0, &ddp_aal },
+	[DDP_COMPONENT_BLS]	= { MTK_DISP_BLS,	0, NULL },
+	[DDP_COMPONENT_COLOR0]	= { MTK_DISP_COLOR,	0, NULL },
+	[DDP_COMPONENT_COLOR1]	= { MTK_DISP_COLOR,	1, NULL },
+	[DDP_COMPONENT_DPI0]	= { MTK_DPI,		0, NULL },
+	[DDP_COMPONENT_DSI0]	= { MTK_DSI,		0, NULL },
+	[DDP_COMPONENT_DSI1]	= { MTK_DSI,		1, NULL },
+	[DDP_COMPONENT_GAMMA]	= { MTK_DISP_GAMMA,	0, &ddp_gamma },
+	[DDP_COMPONENT_OD]	= { MTK_DISP_OD,	0, &ddp_od },
+	[DDP_COMPONENT_OVL0]	= { MTK_DISP_OVL,	0, NULL },
+	[DDP_COMPONENT_OVL1]	= { MTK_DISP_OVL,	1, NULL },
+	[DDP_COMPONENT_PWM0]	= { MTK_DISP_PWM,	0, NULL },
+	[DDP_COMPONENT_RDMA0]	= { MTK_DISP_RDMA,	0, NULL },
+	[DDP_COMPONENT_RDMA1]	= { MTK_DISP_RDMA,	1, NULL },
+	[DDP_COMPONENT_RDMA2]	= { MTK_DISP_RDMA,	2, NULL },
+	[DDP_COMPONENT_UFOE]	= { MTK_DISP_UFOE,	0, &ddp_ufoe },
+	[DDP_COMPONENT_WDMA0]	= { MTK_DISP_WDMA,	0, NULL },
+	[DDP_COMPONENT_WDMA1]	= { MTK_DISP_WDMA,	1, NULL },
 };
 
-enum mtk_ddp_comp_id mtk_ddp_comp_get_id(struct device_node *node,
+int mtk_ddp_comp_get_id(struct device_node *node,
 			enum mtk_ddp_comp_type comp_type)
 {
 	int id = of_alias_get_id(node, mtk_ddp_comp_stem[comp_type]);
@@ -254,7 +247,7 @@ enum mtk_ddp_comp_id mtk_ddp_comp_get_id(struct device_node *node,
 	for (i = 0; i < ARRAY_SIZE(mtk_ddp_matches); i++) {
 		if (comp_type == mtk_ddp_matches[i].type &&
 		    (id < 0 || id == mtk_ddp_matches[i].alias_id))
-			return mtk_ddp_matches[i].index;
+			return i;
 	}
 
 	return -EINVAL;
@@ -275,13 +268,10 @@ int mtk_ddp_comp_init(struct device *dev, struct device_node *node,
 
 	comp->id = comp_id;
 	comp->funcs = funcs ?: mtk_ddp_matches[comp_id].funcs;
-	comp->dev = dev;
 
 	if (comp_id == DDP_COMPONENT_BLS ||
 	    comp_id == DDP_COMPONENT_DPI0 ||
-	    comp_id == DDP_COMPONENT_DPI1 ||
 	    comp_id == DDP_COMPONENT_DSI0 ||
-	    comp_id == DDP_COMPONENT_DSI1 ||
 	    comp_id == DDP_COMPONENT_PWM0) {
 		comp->regs = NULL;
 		comp->clk = NULL;
@@ -305,15 +295,13 @@ int mtk_ddp_comp_init(struct device *dev, struct device_node *node,
 	larb_node = of_parse_phandle(node, "mediatek,larb", 0);
 	if (!larb_node) {
 		dev_err(dev,
-			"Missing mediadek,larb phandle in %s node\n",
-			node->full_name);
+			"Missing mediadek,larb phandle in %pOF node\n", node);
 		return -EINVAL;
 	}
 
 	larb_pdev = of_find_device_by_node(larb_node);
 	if (!larb_pdev) {
-		dev_warn(dev, "Waiting for larb device %s\n",
-			 larb_node->full_name);
+		dev_warn(dev, "Waiting for larb device %pOF\n", larb_node);
 		of_node_put(larb_node);
 		return -EPROBE_DEFER;
 	}

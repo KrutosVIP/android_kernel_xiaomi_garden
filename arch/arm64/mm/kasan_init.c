@@ -13,6 +13,7 @@
 #define pr_fmt(fmt) "kasan: " fmt
 #include <linux/kasan.h>
 #include <linux/kernel.h>
+#include <linux/sched/task.h>
 #include <linux/memblock.h>
 #include <linux/start_kernel.h>
 #include <linux/mm.h>
@@ -101,9 +102,7 @@ static void __init kasan_map_early_shadow(void)
 
 asmlinkage void __init kasan_early_init(void)
 {
-#ifndef CONFIG_KASAN_ENHANCEMENT
 	BUILD_BUG_ON(KASAN_SHADOW_OFFSET != KASAN_SHADOW_END - (1UL << 61));
-#endif
 	BUILD_BUG_ON(!IS_ALIGNED(KASAN_SHADOW_START, PGDIR_SIZE));
 	BUILD_BUG_ON(!IS_ALIGNED(KASAN_SHADOW_END, PGDIR_SIZE));
 	kasan_map_early_shadow();
@@ -192,14 +191,8 @@ void __init kasan_init(void)
 		if (start >= end)
 			break;
 
-		/*
-		 * end + 1 here is intentional. We check several shadow bytes in
-		 * advance to slightly speed up fastpath. In some rare cases
-		 * we could cross boundary of mapped shadow, so we just map
-		 * some more here.
-		 */
 		vmemmap_populate((unsigned long)kasan_mem_to_shadow(start),
-				(unsigned long)kasan_mem_to_shadow(end) + 1,
+				(unsigned long)kasan_mem_to_shadow(end),
 				pfn_to_nid(virt_to_pfn(start)));
 	}
 

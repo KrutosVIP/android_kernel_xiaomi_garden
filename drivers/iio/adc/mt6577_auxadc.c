@@ -184,8 +184,7 @@ static const struct iio_info mt6577_auxadc_info = {
 	.read_raw = &mt6577_auxadc_read_raw,
 };
 
-#ifdef CONFIG_PM_SLEEP
-static int mt6577_auxadc_resume(struct device *dev)
+static int __maybe_unused mt6577_auxadc_resume(struct device *dev)
 {
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
 	struct mt6577_auxadc_device *adc_dev = iio_priv(indio_dev);
@@ -193,7 +192,7 @@ static int mt6577_auxadc_resume(struct device *dev)
 
 	ret = clk_prepare_enable(adc_dev->adc_clk);
 	if (ret) {
-		pr_debug("failed to enable auxadc clock\n");
+		pr_err("failed to enable auxadc clock\n");
 		return ret;
 	}
 
@@ -204,7 +203,7 @@ static int mt6577_auxadc_resume(struct device *dev)
 	return 0;
 }
 
-static int mt6577_auxadc_suspend(struct device *dev)
+static int __maybe_unused mt6577_auxadc_suspend(struct device *dev)
 {
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
 	struct mt6577_auxadc_device *adc_dev = iio_priv(indio_dev);
@@ -215,7 +214,6 @@ static int mt6577_auxadc_suspend(struct device *dev)
 
 	return 0;
 }
-#endif
 
 static int mt6577_auxadc_probe(struct platform_device *pdev)
 {
@@ -308,8 +306,8 @@ static SIMPLE_DEV_PM_OPS(mt6577_auxadc_pm_ops,
 
 static const struct of_device_id mt6577_auxadc_of_match[] = {
 	{ .compatible = "mediatek,mt2701-auxadc", },
+	{ .compatible = "mediatek,mt7622-auxadc", },
 	{ .compatible = "mediatek,mt8173-auxadc", },
-	{ .compatible = "mediatek,mt6735-auxadc", },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, mt6577_auxadc_of_match);

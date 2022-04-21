@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_FB_H
 #define _LINUX_FB_H
 
@@ -400,7 +401,7 @@ struct fb_tile_ops {
 #endif /* CONFIG_FB_TILEBLITTING */
 
 /* FBINFO_* = fb_info.flags bit flags */
-#define FBINFO_MODULE		0x0001	/* Low-level driver is a module */
+#define FBINFO_DEFAULT		0
 #define FBINFO_HWACCEL_DISABLED	0x0002
 	/* When FBINFO_HWACCEL_DISABLED is set:
 	 *  Hardware acceleration is turned off.  Software implementations
@@ -522,7 +523,6 @@ struct fb_info {
 	} *apertures;
 
 	bool skip_vt_switch; /* no VT switch on suspend/resume required */
-	int blank;
 };
 
 static inline struct apertures_struct *alloc_apertures(unsigned int max_num) {
@@ -534,14 +534,6 @@ static inline struct apertures_struct *alloc_apertures(unsigned int max_num) {
 	return a;
 }
 
-#ifdef MODULE
-#define FBINFO_DEFAULT	FBINFO_MODULE
-#else
-#define FBINFO_DEFAULT	0
-#endif
-
-// This will go away
-#define FBINFO_FLAG_MODULE	FBINFO_MODULE
 #define FBINFO_FLAG_DEFAULT	FBINFO_DEFAULT
 
 /* This will go away
@@ -572,10 +564,7 @@ static inline struct apertures_struct *alloc_apertures(unsigned int max_num) {
 #define fb_memcpy_fromfb sbus_memcpy_fromio
 #define fb_memcpy_tofb sbus_memcpy_toio
 
-#elif defined(__i386__) || defined(__alpha__) || defined(__x86_64__) ||	\
-	defined(__hppa__) || defined(__sh__) || defined(__powerpc__) ||	\
-	defined(__avr32__) || defined(__bfin__) || defined(__arm__) ||	\
-	defined(__aarch64__)
+#elif defined(__i386__) || defined(__alpha__) || defined(__x86_64__) || defined(__hppa__) || defined(__sh__) || defined(__powerpc__) || defined(__avr32__) || defined(__bfin__) || defined(__arm__)
 
 #define fb_readb __raw_readb
 #define fb_readw __raw_readw

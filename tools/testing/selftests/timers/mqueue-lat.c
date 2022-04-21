@@ -29,18 +29,7 @@
 #include <signal.h>
 #include <errno.h>
 #include <mqueue.h>
-#ifdef KTEST
 #include "../kselftest.h"
-#else
-static inline int ksft_exit_pass(void)
-{
-	exit(0);
-}
-static inline int ksft_exit_fail(void)
-{
-	exit(1);
-}
-#endif
 
 #define NSEC_PER_SEC 1000000000ULL
 
@@ -113,7 +102,6 @@ int main(int argc, char **argv)
 	int ret;
 
 	printf("Mqueue latency :                          ");
-	fflush(stdout);
 
 	ret = mqueue_lat_test();
 	if (ret < 0) {

@@ -23,6 +23,8 @@
 #include <linux/mmc/host.h>
 
 #include "core.h"
+#include "card.h"
+#include "host.h"
 #include "sdio_cis.h"
 #include "bus.h"
 
@@ -152,18 +154,12 @@ static int mmc_bus_suspend(struct device *dev)
 
 	ret = pm_generic_suspend(dev);
 	if (ret)
-		goto out;
+		return ret;
 
 	ret = host->bus_ops->suspend(host);
-	/*
-	 * Resume subsytem when suspend failed.
-	 */
-	if (ret) {
-		pr_info("%s: error %d during suspend\n",
-			mmc_hostname(host), ret);
+	if (ret)
 		pm_generic_resume(dev);
-	}
-out:
+
 	return ret;
 }
 

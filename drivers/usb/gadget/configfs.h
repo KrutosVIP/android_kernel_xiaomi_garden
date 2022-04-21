@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef USB__GADGET__CONFIGFS__H
 #define USB__GADGET__CONFIGFS__H
 
@@ -16,8 +17,5 @@ static inline struct usb_os_desc *to_usb_os_desc(struct config_item *item)
 {
 	return container_of(to_config_group(item), struct usb_os_desc, group);
 }
-extern int acm_shortcut(void);
-
-extern struct device *create_function_device(char *name);
 
 #endif /*  USB__GADGET__CONFIGFS__H */

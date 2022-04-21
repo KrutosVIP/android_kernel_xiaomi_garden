@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef USB_STORAGE_COMMON_H
 #define USB_STORAGE_COMMON_H
 
@@ -113,8 +114,7 @@ struct fsg_lun {
 	u32		unit_attention_data;
 
 	unsigned int	blkbits; /* Bits of logical block size
-				  *of bound block device
-				  */
+						       of bound block device */
 	unsigned int	blksize; /* logical block size of bound block device */
 	struct device	dev;
 	const char	*name;		/* "lun.name" */
@@ -132,13 +132,12 @@ static inline bool fsg_lun_is_open(struct fsg_lun *curlun)
 
 /* Maximal number of LUNs supported in mass storage function */
 #define FSG_MAX_LUNS	16
-#define LUN_NAME_LEN	8
-
 
 enum fsg_buffer_state {
+	BUF_STATE_SENDING = -2,
+	BUF_STATE_RECEIVING,
 	BUF_STATE_EMPTY = 0,
-	BUF_STATE_FULL,
-	BUF_STATE_BUSY
+	BUF_STATE_FULL
 };
 
 struct fsg_buffhd {
@@ -154,23 +153,14 @@ struct fsg_buffhd {
 	unsigned int			bulk_out_intended_length;
 
 	struct usb_request		*inreq;
-	int				inreq_busy;
 	struct usb_request		*outreq;
-	int				outreq_busy;
 };
 
 enum fsg_state {
-	/* This one isn't used anywhere */
-	FSG_STATE_COMMAND_PHASE = -10,
-	FSG_STATE_DATA_PHASE,
-	FSG_STATE_STATUS_PHASE,
-
-	FSG_STATE_IDLE = 0,
+	FSG_STATE_NORMAL,
 	FSG_STATE_ABORT_BULK_OUT,
-	FSG_STATE_RESET,
-	FSG_STATE_INTERFACE_CHANGE,
+	FSG_STATE_PROTOCOL_RESET,
 	FSG_STATE_CONFIG_CHANGE,
-	FSG_STATE_DISCONNECT,
 	FSG_STATE_EXIT,
 	FSG_STATE_TERMINATED
 };

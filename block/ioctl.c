@@ -8,7 +8,7 @@
 #include <linux/fs.h>
 #include <linux/blktrace_api.h>
 #include <linux/pr.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 static int blkpg_ioctl(struct block_device *bdev, struct blkpg_ioctl_arg __user *arg)
 {
@@ -45,6 +45,9 @@ static int blkpg_ioctl(struct block_device *bdev, struct blkpg_ioctl_arg __user 
 				    || pstart < 0 || plength < 0 || partno > 65535)
 					return -EINVAL;
 			}
+			/* check if partition is aligned to blocksize */
+			if (p.start & (bdev_logical_block_size(bdev) - 1))
+				return -EINVAL;
 
 			mutex_lock(&bdev->bd_mutex);
 
@@ -252,7 +255,7 @@ static int blk_ioctl_zeroout(struct block_device *bdev, fmode_t mode,
 	truncate_inode_pages_range(mapping, start, end);
 
 	return blkdev_issue_zeroout(bdev, start >> 9, len >> 9, GFP_KERNEL,
-				    false);
+			BLKDEV_ZERO_NOUNMAP);
 }
 
 static int put_ushort(unsigned long arg, unsigned short val)
@@ -435,7 +438,7 @@ static int blkdev_roset(struct block_device *bdev, fmode_t mode,
 	int ret, n;
 
 	ret = __blkdev_driver_ioctl(bdev, mode, cmd, arg);
-	if (ret && !is_unrecognized_ioctl(ret))
+	if (!is_unrecognized_ioctl(ret))
 		return ret;
 	if (!capable(CAP_SYS_ADMIN))
 		return -EACCES;
@@ -470,28 +473,6 @@ static int blkdev_getgeo(struct block_device *bdev,
 		return -EFAULT;
 	return 0;
 }
-
-/* MTK PATCH */
-#ifdef CONFIG_MTK_BLK_RW_PROFILING
-static int blkdev_rwprofilng(struct block_device *bdev,
-	struct block_rw_profiling __user *argp, enum block_rw_enum operation)
-{
-	u32 temp_buf[RW_ARRAY_SIZE];
-
-	if (!argp)
-		return -EINVAL;
-
-	if (argp->buf_byte > sizeof(temp_buf))
-		return -EINVAL;
-
-	mtk_trace_block_rq_get_rw_counter(temp_buf, operation);
-
-	if (copy_to_user(argp->buf_ptr, &temp_buf, argp->buf_byte))
-		return -EFAULT;
-
-	return 0;
-}
-#endif
 
 /* set the logical block size */
 static int blkdev_bszset(struct block_device *bdev, fmode_t mode,
@@ -540,25 +521,17 @@ int blkdev_ioctl(struct block_device *bdev, fmode_t mode, unsigned cmd,
 				BLKDEV_DISCARD_SECURE);
 	case BLKZEROOUT:
 		return blk_ioctl_zeroout(bdev, mode, arg);
+	case BLKREPORTZONE:
+		return blkdev_report_zones_ioctl(bdev, mode, cmd, arg);
+	case BLKRESETZONE:
+		return blkdev_reset_zones_ioctl(bdev, mode, cmd, arg);
 	case HDIO_GETGEO:
 		return blkdev_getgeo(bdev, argp);
-/* MTK PATCH */
-#ifdef CONFIG_MTK_BLK_RW_PROFILING
-	case BLKRNUM:
-		return blkdev_rwprofilng(bdev, argp, blockread);
-	case BLKWNUM:
-		return blkdev_rwprofilng(bdev, argp, blockwrite);
-	case BLKRWNUM:
-		return blkdev_rwprofilng(bdev, argp, blockrw);
-	case BLKRWCLR:
-		return mtk_trace_block_rq_get_rw_counter_clr();
-#endif
 	case BLKRAGET:
 	case BLKFRAGET:
 		if (!arg)
 			return -EINVAL;
-		return put_long(arg,
-				(bdev->bd_bdi->ra_pages * PAGE_SIZE) / 512);
+		return put_long(arg, (bdev->bd_bdi->ra_pages*PAGE_SIZE) / 512);
 	case BLKROGET:
 		return put_int(arg, bdev_read_only(bdev) != 0);
 	case BLKBSZGET: /* get block device soft block size (cf. BLKSSZGET) */
@@ -574,7 +547,7 @@ int blkdev_ioctl(struct block_device *bdev, fmode_t mode, unsigned cmd,
 	case BLKALIGNOFF:
 		return put_int(arg, bdev_alignment_offset(bdev));
 	case BLKDISCARDZEROES:
-		return put_uint(arg, bdev_discard_zeroes_data(bdev));
+		return put_uint(arg, 0);
 	case BLKSECTGET:
 		max_sectors = min_t(unsigned int, USHRT_MAX,
 				    queue_max_sectors(bdev_get_queue(bdev)));

@@ -30,10 +30,6 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/irq.h>
 
-#ifdef CONFIG_MTK_SCHED_MONITOR
-#include "mtk_sched_mon.h"
-#endif
-
 /*
    - No shared variables, all the data are CPU local.
    - If a softirq needs serialization, let it serialize itself
@@ -82,6 +78,17 @@ static void wakeup_softirqd(void)
 }
 
 /*
+ * If ksoftirqd is scheduled, we do not want to process pending softirqs
+ * right now. Let ksoftirqd handle this at its own rate, to get fairness.
+ */
+static bool ksoftirqd_running(void)
+{
+	struct task_struct *tsk = __this_cpu_read(ksoftirqd);
+
+	return tsk && (tsk->state == TASK_RUNNING);
+}
+
+/*
  * preempt_count and SOFTIRQ_OFFSET usage:
  * - preempt_count is changed by SOFTIRQ_OFFSET on entering or leaving
  *   softirq processing.
@@ -123,9 +130,6 @@ void __local_bh_disable_ip(unsigned long ip, unsigned int cnt)
 		current->preempt_disable_ip = get_lock_parent_ip();
 #endif
 		trace_preempt_off(CALLER_ADDR0, get_lock_parent_ip());
-#ifdef CONFIG_PREEMPT_MONITOR
-		MT_trace_preempt_off();
-#endif
 	}
 }
 EXPORT_SYMBOL(__local_bh_disable_ip);
@@ -277,13 +281,7 @@ restart:
 		kstat_incr_softirqs_this_cpu(vec_nr);
 
 		trace_softirq_entry(vec_nr);
-#ifdef CONFIG_MTK_SCHED_MONITOR
-		mt_trace_SoftIRQ_start(vec_nr);
-#endif
 		h->action(h);
-#ifdef CONFIG_MTK_SCHED_MONITOR
-		mt_trace_SoftIRQ_end(vec_nr);
-#endif
 		trace_softirq_exit(vec_nr);
 		if (unlikely(prev_count != preempt_count())) {
 			pr_err("huh, entered softirq %u %s %p with preempt_count %08x, exited with %08x?\n",
@@ -311,7 +309,7 @@ restart:
 	account_irq_exit_time(current);
 	__local_bh_enable(SOFTIRQ_OFFSET);
 	WARN_ON_ONCE(in_interrupt());
-	tsk_restore_flags(current, old_flags, PF_MEMALLOC);
+	current_restore_flags(old_flags, PF_MEMALLOC);
 }
 
 asmlinkage __visible void do_softirq(void)
@@ -326,7 +324,7 @@ asmlinkage __visible void do_softirq(void)
 
 	pending = local_softirq_pending();
 
-	if (pending)
+	if (pending && !ksoftirqd_running())
 		do_softirq_own_stack();
 
 	local_irq_restore(flags);
@@ -353,6 +351,9 @@ void irq_enter(void)
 
 static inline void invoke_softirq(void)
 {
+	if (ksoftirqd_running())
+		return;
+
 	if (!force_irqthreads) {
 #ifdef CONFIG_HAVE_IRQ_EXIT_ON_IRQ_STACK
 		/*
@@ -485,16 +486,6 @@ void __tasklet_hi_schedule(struct tasklet_struct *t)
 }
 EXPORT_SYMBOL(__tasklet_hi_schedule);
 
-void __tasklet_hi_schedule_first(struct tasklet_struct *t)
-{
-	BUG_ON(!irqs_disabled());
-
-	t->next = __this_cpu_read(tasklet_hi_vec.head);
-	__this_cpu_write(tasklet_hi_vec.head, t);
-	__raise_softirq_irqoff(HI_SOFTIRQ);
-}
-EXPORT_SYMBOL(__tasklet_hi_schedule_first);
-
 static __latent_entropy void tasklet_action(struct softirq_action *a)
 {
 	struct tasklet_struct *list;
@@ -515,13 +506,7 @@ static __latent_entropy void tasklet_action(struct softirq_action *a)
 				if (!test_and_clear_bit(TASKLET_STATE_SCHED,
 							&t->state))
 					BUG();
-#ifdef CONFIG_MTK_SCHED_MONITOR
-				mt_trace_tasklet_start(t->func);
-#endif
 				t->func(t->data);
-#ifdef CONFIG_MTK_SCHED_MONITOR
-				mt_trace_tasklet_end(t->func);
-#endif
 				tasklet_unlock(t);
 				continue;
 			}

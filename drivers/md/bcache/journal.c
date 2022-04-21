@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * bcache journalling code, for btree insertions
  *
@@ -53,7 +54,7 @@ reread:		left = ca->sb.bucket_size - offset;
 
 		bio_reset(bio);
 		bio->bi_iter.bi_sector	= bucket + offset;
-		bio->bi_bdev	= ca->bdev;
+		bio_set_dev(bio, ca->bdev);
 		bio->bi_iter.bi_size	= len << 9;
 
 		bio->bi_end_io	= journal_read_endio;
@@ -309,18 +310,6 @@ void bch_journal_mark(struct cache_set *c, struct list_head *list)
 	}
 }
 
-bool is_discard_enabled(struct cache_set *s)
-{
-	struct cache *ca;
-	unsigned int i;
-
-	for_each_cache(ca, s, i)
-		if (ca->discard)
-			return true;
-
-	return false;
-}
-
 int bch_journal_replay(struct cache_set *s, struct list_head *list)
 {
 	int ret = 0, keys = 0, entries = 0;
@@ -334,17 +323,9 @@ int bch_journal_replay(struct cache_set *s, struct list_head *list)
 	list_for_each_entry(i, list, list) {
 		BUG_ON(i->pin && atomic_read(i->pin) != 1);
 
-		if (n != i->j.seq) {
-			if (n == start && is_discard_enabled(s))
-				pr_info("bcache: journal entries %llu-%llu may be discarded! (replaying %llu-%llu)",
-					n, i->j.seq - 1, start, end);
-			else {
-				pr_err("bcache: journal entries %llu-%llu missing! (replaying %llu-%llu)",
-					n, i->j.seq - 1, start, end);
-				ret = -EIO;
-				goto err;
-			}
-		}
+		cache_set_err_on(n != i->j.seq, s,
+"bcache: journal entries %llu-%llu missing! (replaying %llu-%llu)",
+				 n, i->j.seq - 1, start, end);
 
 		for (k = i->j.start;
 		     k < bset_bkey_last(&i->j);
@@ -468,13 +449,11 @@ static void do_journal_discard(struct cache *ca)
 
 		atomic_set(&ja->discard_in_flight, DISCARD_IN_FLIGHT);
 
-		bio_init(bio);
+		bio_init(bio, bio->bi_inline_vecs, 1);
 		bio_set_op_attrs(bio, REQ_OP_DISCARD, 0);
 		bio->bi_iter.bi_sector	= bucket_to_sector(ca->set,
 						ca->sb.d[ja->discard_idx]);
-		bio->bi_bdev		= ca->bdev;
-		bio->bi_max_vecs	= 1;
-		bio->bi_io_vec		= bio->bi_inline_vecs;
+		bio_set_dev(bio, ca->bdev);
 		bio->bi_iter.bi_size	= bucket_bytes(ca);
 		bio->bi_end_io		= journal_discard_endio;
 
@@ -533,11 +512,11 @@ static void journal_reclaim(struct cache_set *c)
 				  ca->sb.nr_this_dev);
 	}
 
-	if (n) {
-		bkey_init(k);
-		SET_KEY_PTRS(k, n);
+	bkey_init(k);
+	SET_KEY_PTRS(k, n);
+
+	if (n)
 		c->journal.blocks_free = c->sb.bucket_size >> c->block_bits;
-	}
 out:
 	if (!journal_full(&c->journal))
 		__closure_wake_up(&c->journal.wait);
@@ -571,7 +550,7 @@ static void journal_write_endio(struct bio *bio)
 {
 	struct journal_write *w = bio->bi_private;
 
-	cache_set_err_on(bio->bi_error, w->c, "journal io error");
+	cache_set_err_on(bio->bi_status, w->c, "journal io error");
 	closure_put(&w->c->journal.io);
 }
 
@@ -645,7 +624,7 @@ static void journal_write_unlocked(struct closure *cl)
 
 		bio_reset(bio);
 		bio->bi_iter.bi_sector	= PTR_OFFSET(k, i);
-		bio->bi_bdev	= ca->bdev;
+		bio_set_dev(bio, ca->bdev);
 		bio->bi_iter.bi_size = sectors << 9;
 
 		bio->bi_end_io	= journal_write_endio;
@@ -661,9 +640,6 @@ static void journal_write_unlocked(struct closure *cl)
 
 		ca->journal.seq[ca->journal.cur_idx] = w->data->seq;
 	}
-
-	/* If KEY_PTRS(k) == 0, this jset gets lost in air */
-	BUG_ON(i == 0);
 
 	atomic_dec_bug(&fifo_back(&c->journal.pin));
 	bch_journal_next(&c->journal);

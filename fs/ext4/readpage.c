@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * linux/fs/ext4/readpage.c
  *
@@ -87,24 +88,18 @@ static void mpage_end_io(struct bio *bio)
 	if (trace_android_fs_dataread_start_enabled())
 		ext4_trace_read_completion(bio);
 
-	if (bio_encrypted(bio)) {
-		WARN_ON(bio->bi_private);
-		goto uptodate;
-	}
-
 	if (ext4_bio_encrypted(bio)) {
-		if (bio->bi_error) {
+		if (bio->bi_status) {
 			fscrypt_release_ctx(bio->bi_private);
 		} else {
 			fscrypt_enqueue_decrypt_bio(bio->bi_private, bio);
 			return;
 		}
 	}
-uptodate:
 	bio_for_each_segment_all(bv, bio, i) {
 		struct page *page = bv->bv_page;
 
-		if (!bio->bi_error) {
+		if (!bio->bi_status) {
 			SetPageUptodate(page);
 		} else {
 			ClearPageUptodate(page);
@@ -280,7 +275,6 @@ int ext4_mpage_readpages(struct address_space *mapping,
 		 */
 		if (bio && (last_block_in_bio != blocks[0] - 1)) {
 		submit_and_realloc:
-			ext4_set_bio_ctx(inode, bio);
 			ext4_submit_bio_read(bio);
 			bio = NULL;
 		}
@@ -288,8 +282,7 @@ int ext4_mpage_readpages(struct address_space *mapping,
 			struct fscrypt_ctx *ctx = NULL;
 
 			if (ext4_encrypted_inode(inode) &&
-			    S_ISREG(inode->i_mode) &&
-			    !fscrypt_is_hw_encrypt(inode)) {
+			    S_ISREG(inode->i_mode)) {
 				ctx = fscrypt_get_ctx(inode, GFP_NOFS);
 				if (IS_ERR(ctx))
 					goto set_error_page;
@@ -301,7 +294,7 @@ int ext4_mpage_readpages(struct address_space *mapping,
 					fscrypt_release_ctx(ctx);
 				goto set_error_page;
 			}
-			bio->bi_bdev = bdev;
+			bio_set_dev(bio, bdev);
 			bio->bi_iter.bi_sector = blocks[0] << (blkbits - 9);
 			bio->bi_end_io = mpage_end_io;
 			bio->bi_private = ctx;
@@ -315,7 +308,6 @@ int ext4_mpage_readpages(struct address_space *mapping,
 		if (((map.m_flags & EXT4_MAP_BOUNDARY) &&
 		     (relative_block == map.m_len)) ||
 		    (first_hole != blocks_per_page)) {
-			ext4_set_bio_ctx(inode, bio);
 			ext4_submit_bio_read(bio);
 			bio = NULL;
 		} else
@@ -323,7 +315,6 @@ int ext4_mpage_readpages(struct address_space *mapping,
 		goto next_page;
 	confused:
 		if (bio) {
-			ext4_set_bio_ctx(inode, bio);
 			ext4_submit_bio_read(bio);
 			bio = NULL;
 		}
@@ -336,9 +327,7 @@ int ext4_mpage_readpages(struct address_space *mapping,
 			put_page(page);
 	}
 	BUG_ON(pages && !list_empty(pages));
-	if (bio) {
-		ext4_set_bio_ctx(inode, bio);
+	if (bio)
 		ext4_submit_bio_read(bio);
-	}
 	return 0;
 }

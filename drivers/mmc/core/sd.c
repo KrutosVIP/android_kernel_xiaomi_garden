@@ -22,6 +22,8 @@
 #include <linux/mmc/sd.h>
 
 #include "core.h"
+#include "card.h"
+#include "host.h"
 #include "bus.h"
 #include "mmc_ops.h"
 #include "sd.h"
@@ -37,11 +39,11 @@ static const unsigned char tran_mant[] = {
 	35,	40,	45,	50,	55,	60,	70,	80,
 };
 
-static const unsigned int tacc_exp[] = {
+static const unsigned int taac_exp[] = {
 	1,	10,	100,	1000,	10000,	100000,	1000000, 10000000,
 };
 
-static const unsigned int tacc_mant[] = {
+static const unsigned int taac_mant[] = {
 	0,	10,	12,	13,	15,	20,	25,	30,
 	35,	40,	45,	50,	55,	60,	70,	80,
 };
@@ -109,8 +111,8 @@ static int mmc_decode_csd(struct mmc_card *card)
 	case 0:
 		m = UNSTUFF_BITS(resp, 115, 4);
 		e = UNSTUFF_BITS(resp, 112, 3);
-		csd->tacc_ns	 = (tacc_exp[e] * tacc_mant[m] + 9) / 10;
-		csd->tacc_clks	 = UNSTUFF_BITS(resp, 104, 8) * 100;
+		csd->taac_ns	 = (taac_exp[e] * taac_mant[m] + 9) / 10;
+		csd->taac_clks	 = UNSTUFF_BITS(resp, 104, 8) * 100;
 
 		m = UNSTUFF_BITS(resp, 99, 4);
 		e = UNSTUFF_BITS(resp, 96, 3);
@@ -146,8 +148,8 @@ static int mmc_decode_csd(struct mmc_card *card)
 		 */
 		mmc_card_set_blockaddr(card);
 
-		csd->tacc_ns	 = 0; /* Unused */
-		csd->tacc_clks	 = 0; /* Unused */
+		csd->taac_ns	 = 0; /* Unused */
+		csd->taac_clks	 = 0; /* Unused */
 
 		m = UNSTUFF_BITS(resp, 99, 4);
 		e = UNSTUFF_BITS(resp, 96, 3);
@@ -214,14 +216,6 @@ static int mmc_decode_scr(struct mmc_card *card)
 
 	if (scr->sda_spec3)
 		scr->cmds = UNSTUFF_BITS(resp, 32, 2);
-
-	/* SD Spec says: any SD Card shall set at least bits 0 and 2 */
-	if (!(scr->bus_widths & SD_SCR_BUS_WIDTH_1) ||
-	    !(scr->bus_widths & SD_SCR_BUS_WIDTH_4)) {
-		pr_err("%s: invalid bus width\n", mmc_hostname(card->host));
-		return -EINVAL;
-	}
-
 	return 0;
 }
 
@@ -231,7 +225,7 @@ static int mmc_decode_scr(struct mmc_card *card)
 static int mmc_read_ssr(struct mmc_card *card)
 {
 	unsigned int au, es, et, eo;
-	u32 *raw_ssr;
+	__be32 *raw_ssr;
 	int i;
 
 	if (!(card->csd.cmdclass & CCC_APP_SPEC)) {
@@ -300,12 +294,8 @@ static int mmc_read_switch(struct mmc_card *card)
 	err = -EIO;
 
 	status = kmalloc(64, GFP_KERNEL);
-	if (!status) {
-		pr_err("%s: could not allocate a buffer for "
-			"switch capabilities.\n",
-			mmc_hostname(card->host));
+	if (!status)
 		return -ENOMEM;
-	}
 
 	/*
 	 * Find out the card's support bits with a mode 0 operation.
@@ -365,11 +355,8 @@ int mmc_sd_switch_hs(struct mmc_card *card)
 		return 0;
 
 	status = kmalloc(64, GFP_KERNEL);
-	if (!status) {
-		pr_err("%s: could not allocate a buffer for "
-			"switch capabilities.\n", mmc_hostname(card->host));
+	if (!status)
 		return -ENOMEM;
-	}
 
 	err = mmc_sd_switch(card, 1, 0, 1, status);
 	if (err)
@@ -602,11 +589,8 @@ static int mmc_sd_init_uhs_card(struct mmc_card *card)
 		return 0;
 
 	status = kmalloc(64, GFP_KERNEL);
-	if (!status) {
-		pr_err("%s: could not allocate a buffer for "
-			"switch capabilities.\n", mmc_hostname(card->host));
+	if (!status)
 		return -ENOMEM;
-	}
 
 	/* Set 4-bit bus width */
 	if ((card->host->caps & MMC_CAP_4_BIT_DATA) &&
@@ -695,7 +679,8 @@ MMC_DEV_ATTR(ocr, "0x%08x\n", card->ocr);
 
 
 static ssize_t mmc_dsr_show(struct device *dev,
-	struct device_attribute *attr, char *buf)
+                           struct device_attribute *attr,
+                           char *buf)
 {
        struct mmc_card *card = mmc_dev_to_card(dev);
        struct mmc_host *host = card->host;
@@ -708,43 +693,6 @@ static ssize_t mmc_dsr_show(struct device *dev,
 }
 
 static DEVICE_ATTR(dsr, S_IRUGO, mmc_dsr_show, NULL);
-
-#define MTK_SHOW_SPEED_CLASS  //for HUIWEI project use
-#ifdef MTK_SHOW_SPEED_CLASS
-static ssize_t mmc_speed_class_show(struct device *dev,
-	struct device_attribute *attr, char *buf)
-{
-	u8 class_buf = 0;
-	u8 class = 0;
-	struct mmc_card *card = mmc_dev_to_card(dev);
-
-	class_buf = (u8)(card->raw_ssr[2]>>24);
-
-	switch (class_buf) {
-	case 0x00:
-		class = 0;
-		break;
-	case 0x01:
-		class = 2;
-		break;
-	case 0x02:
-		class = 4;
-		break;
-	case 0x03:
-		class = 6;
-		break;
-	case 0x04:
-		class = 10;
-		break;
-	default:
-		return sprintf(buf, "class unknown type\n");
-	}
-
-	return sprintf(buf, "%d\n", class);
-}
-
-static DEVICE_ATTR(speedclass, 0444, mmc_speed_class_show, NULL);
-#endif
 
 static struct attribute *sd_std_attrs[] = {
 	&dev_attr_cid.attr,
@@ -762,9 +710,6 @@ static struct attribute *sd_std_attrs[] = {
 	&dev_attr_serial.attr,
 	&dev_attr_ocr.attr,
 	&dev_attr_dsr.attr,
-#ifdef MTK_SHOW_SPEED_CLASS
-	&dev_attr_speedclass.attr,
-#endif
 	NULL,
 };
 ATTRIBUTE_GROUPS(sd_std);
@@ -833,8 +778,7 @@ try_again:
 	 */
 	if (!mmc_host_is_spi(host) && rocr &&
 	   ((*rocr & 0x41000000) == 0x41000000)) {
-		err = mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_180,
-					pocr);
+		err = mmc_set_uhs_voltage(host, pocr);
 		if (err == -EAGAIN) {
 			retries--;
 			goto try_again;
@@ -844,11 +788,7 @@ try_again:
 		}
 	}
 
-	if (mmc_host_is_spi(host))
-		err = mmc_send_cid(host, cid);
-	else
-		err = mmc_all_send_cid(host, cid);
-
+	err = mmc_send_cid(host, cid);
 	return err;
 }
 
@@ -902,7 +842,7 @@ int mmc_sd_setup_card(struct mmc_host *host, struct mmc_card *card,
 		/*
 		 * Fetch SCR from card.
 		 */
-		err = mmc_app_send_scr(card, card->raw_scr);
+		err = mmc_app_send_scr(card);
 		if (err)
 			return err;
 
@@ -1004,7 +944,6 @@ static int mmc_sd_init_card(struct mmc_host *host, u32 ocr,
 	u32 cid[4];
 	u32 rocr = 0;
 
-	BUG_ON(!host);
 	WARN_ON(!host->claimed);
 
 	err = mmc_sd_get_cid(host, ocr, cid, &rocr);
@@ -1120,13 +1059,8 @@ free_card:
  */
 static void mmc_sd_remove(struct mmc_host *host)
 {
-	BUG_ON(!host);
-	BUG_ON(!host->card);
-
 	mmc_remove_card(host->card);
-	mmc_claim_host(host);
 	host->card = NULL;
-	mmc_release_host(host);
 }
 
 /*
@@ -1147,20 +1081,7 @@ static void mmc_sd_detect(struct mmc_host *host)
 	int retries = 5;
 #endif
 
-	BUG_ON(!host);
-	BUG_ON(!host->card);
-
-	/*
-	 * Try to acquire claim host. If failed to get the lock in 2 sec,
-	 * just return; This is to ensure that when this call is invoked
-	 * due to pm_suspend, not to block suspend for longer duration.
-	 */
-	pm_runtime_get_sync(&host->card->dev);
-	if (!mmc_try_claim_host(host, 2000)) {
-		pm_runtime_mark_last_busy(&host->card->dev);
-		pm_runtime_put_autosuspend(&host->card->dev);
-		return;
-	}
+	mmc_get_card(host->card);
 
 	/*
 	 * Just check if our card has been removed.
@@ -1199,22 +1120,17 @@ static int _mmc_sd_suspend(struct mmc_host *host)
 {
 	int err = 0;
 
-	BUG_ON(!host);
-	BUG_ON(!host->card);
-
 	mmc_claim_host(host);
 
-	if (host->card) {
-		if (mmc_card_suspended(host->card))
-			goto out;
+	if (mmc_card_suspended(host->card))
+		goto out;
 
-		if (!mmc_host_is_spi(host))
-			err = mmc_deselect_cards(host);
+	if (!mmc_host_is_spi(host))
+		err = mmc_deselect_cards(host);
 
-		if (!err) {
-			mmc_power_off(host);
-			mmc_card_set_suspended(host->card);
-		}
+	if (!err) {
+		mmc_power_off(host);
+		mmc_card_set_suspended(host->card);
 	}
 
 out:
@@ -1248,9 +1164,6 @@ static int _mmc_sd_resume(struct mmc_host *host)
 #ifdef CONFIG_MMC_PARANOID_SD_INIT
 	int retries;
 #endif
-
-	BUG_ON(!host);
-	BUG_ON(!host->card);
 
 	mmc_claim_host(host);
 
@@ -1353,7 +1266,6 @@ int mmc_attach_sd(struct mmc_host *host)
 	int retries;
 #endif
 
-	BUG_ON(!host);
 	WARN_ON(!host->claimed);
 
 	err = mmc_send_app_op_cond(host, 0, &ocr);

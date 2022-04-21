@@ -96,6 +96,7 @@ static void yurex_delete(struct kref *kref)
 
 	dev_dbg(&dev->interface->dev, "%s\n", __func__);
 
+	usb_put_dev(dev->udev);
 	if (dev->cntl_urb) {
 		usb_kill_urb(dev->cntl_urb);
 		kfree(dev->cntl_req);
@@ -111,7 +112,6 @@ static void yurex_delete(struct kref *kref)
 				dev->int_buffer, dev->urb->transfer_dma);
 		usb_free_urb(dev->urb);
 	}
-	usb_put_dev(dev->udev);
 	kfree(dev);
 }
 
@@ -195,8 +195,8 @@ static int yurex_probe(struct usb_interface *interface, const struct usb_device_
 	struct usb_host_interface *iface_desc;
 	struct usb_endpoint_descriptor *endpoint;
 	int retval = -ENOMEM;
-	int i;
 	DEFINE_WAIT(wait);
+	int res;
 
 	/* allocate memory for our device state and initialize it */
 	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
@@ -212,20 +212,14 @@ static int yurex_probe(struct usb_interface *interface, const struct usb_device_
 
 	/* set up the endpoint information */
 	iface_desc = interface->cur_altsetting;
-	for (i = 0; i < iface_desc->desc.bNumEndpoints; i++) {
-		endpoint = &iface_desc->endpoint[i].desc;
-
-		if (usb_endpoint_is_int_in(endpoint)) {
-			dev->int_in_endpointAddr = endpoint->bEndpointAddress;
-			break;
-		}
-	}
-	if (!dev->int_in_endpointAddr) {
-		retval = -ENODEV;
+	res = usb_find_int_in_endpoint(iface_desc, &endpoint);
+	if (res) {
 		dev_err(&interface->dev, "Could not find endpoints\n");
+		retval = res;
 		goto error;
 	}
 
+	dev->int_in_endpointAddr = endpoint->bEndpointAddress;
 
 	/* allocate control URB */
 	dev->cntl_urb = usb_alloc_urb(0, GFP_KERNEL);
@@ -324,7 +318,6 @@ static void yurex_disconnect(struct usb_interface *interface)
 	usb_deregister_dev(interface, &yurex_class);
 
 	/* prevent more I/O from starting */
-	usb_poison_urb(dev->urb);
 	mutex_lock(&dev->io_mutex);
 	dev->interface = NULL;
 	mutex_unlock(&dev->io_mutex);
@@ -424,9 +417,6 @@ static ssize_t yurex_read(struct file *file, char __user *buffer, size_t count,
 	spin_unlock_irqrestore(&dev->lock, flags);
 	mutex_unlock(&dev->io_mutex);
 
-	if (WARN_ON_ONCE(len >= sizeof(in_buffer)))
-		return -EIO;
-
 	return simple_read_from_buffer(buffer, count, ppos, in_buffer, len);
 }
 
@@ -435,13 +425,13 @@ static ssize_t yurex_write(struct file *file, const char __user *user_buffer,
 {
 	struct usb_yurex *dev;
 	int i, set = 0, retval = 0;
-	char buffer[16 + 1];
+	char buffer[16];
 	char *data = buffer;
 	unsigned long long c, c2 = 0;
 	signed long timeout = 0;
 	DEFINE_WAIT(wait);
 
-	count = min(sizeof(buffer) - 1, count);
+	count = min(sizeof(buffer), count);
 	dev = file->private_data;
 
 	/* verify that we actually have some data to write */
@@ -460,7 +450,6 @@ static ssize_t yurex_write(struct file *file, const char __user *user_buffer,
 		retval = -EFAULT;
 		goto error;
 	}
-	buffer[count] = 0;
 	memset(dev->cntl_buffer, CMD_PADDING, YUREX_BUF_SIZE);
 
 	switch (buffer[0]) {

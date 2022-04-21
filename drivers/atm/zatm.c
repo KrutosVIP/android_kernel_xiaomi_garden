@@ -23,12 +23,12 @@
 #include <linux/bitops.h>
 #include <linux/wait.h>
 #include <linux/slab.h>
-#include <linux/nospec.h>
 #include <asm/byteorder.h>
 #include <asm/string.h>
 #include <asm/io.h>
 #include <linux/atomic.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
+#include <linux/nospec.h>
 
 #include "uPD98401.h"
 #include "uPD98402.h"
@@ -1483,8 +1483,6 @@ static int zatm_ioctl(struct atm_dev *dev,unsigned int cmd,void __user *arg)
 					return -EFAULT;
 				if (pool < 0 || pool > ZATM_LAST_POOL)
 					return -EINVAL;
-				pool = array_index_nospec(pool,
-							  ZATM_LAST_POOL + 1);
 				if (copy_from_user(&info,
 				    &((struct zatm_pool_req __user *) arg)->info,
 				    sizeof(info))) return -EFAULT;
@@ -1618,7 +1616,7 @@ static int zatm_init_one(struct pci_dev *pci_dev,
 
 	ret = dma_set_mask_and_coherent(&pci_dev->dev, DMA_BIT_MASK(32));
 	if (ret < 0)
-		goto out_disable;
+		goto out_release;
 
 	zatm_dev->pci_dev = pci_dev;
 	dev->dev_data = zatm_dev;
@@ -1647,7 +1645,7 @@ out_free:
 
 MODULE_LICENSE("GPL");
 
-static struct pci_device_id zatm_pci_tbl[] = {
+static const struct pci_device_id zatm_pci_tbl[] = {
 	{ PCI_VDEVICE(ZEITNET, PCI_DEVICE_ID_ZEITNET_1221), ZATM_COPPER },
 	{ PCI_VDEVICE(ZEITNET, PCI_DEVICE_ID_ZEITNET_1225), 0 },
 	{ 0, }

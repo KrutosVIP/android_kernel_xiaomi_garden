@@ -40,8 +40,6 @@ static void azx_clear_corbrp(struct hdac_bus *bus)
  */
 void snd_hdac_bus_init_cmd_io(struct hdac_bus *bus)
 {
-	WARN_ON_ONCE(!bus->rb.area);
-
 	spin_lock_irq(&bus->reg_lock);
 	/* CORB set up */
 	bus->corb.addr = bus->rb.addr;
@@ -274,11 +272,11 @@ int snd_hdac_bus_parse_capabilities(struct hdac_bus *bus)
 	unsigned int offset;
 	unsigned int counter = 0;
 
-	offset = snd_hdac_chip_readl(bus, LLCH);
+	offset = snd_hdac_chip_readw(bus, LLCH);
 
 	/* Lets walk the linked capabilities list */
 	do {
-		cur_cap = _snd_hdac_chip_read(l, bus, offset);
+		cur_cap = _snd_hdac_chip_readl(bus, offset);
 
 		dev_dbg(bus->dev, "Capability version: 0x%x\n",
 			(cur_cap & AZX_CAP_HDR_VER_MASK) >> AZX_CAP_HDR_VER_OFF);
@@ -480,14 +478,12 @@ bool snd_hdac_bus_init_chip(struct hdac_bus *bus, bool full_reset)
 	/* reset controller */
 	azx_reset(bus, full_reset);
 
-	/* clear interrupts */
+	/* initialize interrupts */
 	azx_int_clear(bus);
+	azx_int_enable(bus);
 
 	/* initialize the codec command I/O */
 	snd_hdac_bus_init_cmd_io(bus);
-
-	/* enable interrupts after CORB/RIRB buffers are initialized above */
-	azx_int_enable(bus);
 
 	/* program the position buffer */
 	if (bus->use_posbuf && bus->posbuf.addr) {

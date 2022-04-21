@@ -222,8 +222,7 @@ static void delay_dtr(struct dm_target *ti)
 {
 	struct delay_c *dc = ti->private;
 
-	if (dc->kdelayd_wq)
-		destroy_workqueue(dc->kdelayd_wq);
+	destroy_workqueue(dc->kdelayd_wq);
 
 	dm_put_device(ti, dc->dev_read);
 
@@ -283,7 +282,7 @@ static int delay_map(struct dm_target *ti, struct bio *bio)
 	struct delay_c *dc = ti->private;
 
 	if ((bio_data_dir(bio) == WRITE) && (dc->dev_write)) {
-		bio->bi_bdev = dc->dev_write->bdev;
+		bio_set_dev(bio, dc->dev_write->bdev);
 		if (bio_sectors(bio))
 			bio->bi_iter.bi_sector = dc->start_write +
 				dm_target_offset(ti, bio->bi_iter.bi_sector);
@@ -291,7 +290,7 @@ static int delay_map(struct dm_target *ti, struct bio *bio)
 		return delay_bio(dc, dc->write_delay, bio);
 	}
 
-	bio->bi_bdev = dc->dev_read->bdev;
+	bio_set_dev(bio, dc->dev_read->bdev);
 	bio->bi_iter.bi_sector = dc->start_read +
 		dm_target_offset(ti, bio->bi_iter.bi_sector);
 
@@ -341,6 +340,7 @@ out:
 static struct target_type delay_target = {
 	.name	     = "delay",
 	.version     = {1, 2, 1},
+	.features    = DM_TARGET_PASSES_INTEGRITY,
 	.module      = THIS_MODULE,
 	.ctr	     = delay_ctr,
 	.dtr	     = delay_dtr,

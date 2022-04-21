@@ -59,6 +59,15 @@ EXPORT_SYMBOL_GPL(usb_phy_generic_unregister);
 
 static int nop_set_suspend(struct usb_phy *x, int suspend)
 {
+	struct usb_phy_generic *nop = dev_get_drvdata(x->dev);
+
+	if (!IS_ERR(nop->clk)) {
+		if (suspend)
+			clk_disable_unprepare(nop->clk);
+		else
+			clk_prepare_enable(nop->clk);
+	}
+
 	return 0;
 }
 
@@ -224,7 +233,6 @@ int usb_phy_gen_create_phy(struct device *dev, struct usb_phy_generic *nop,
 			clk_rate = 0;
 
 		needs_vcc = of_property_read_bool(node, "vcc-supply");
-#ifndef CONFIG_FPGA_EARLY_PORTING
 		nop->gpiod_reset = devm_gpiod_get_optional(dev, "reset",
 							   GPIOD_ASIS);
 		err = PTR_ERR_OR_ZERO(nop->gpiod_reset);
@@ -234,9 +242,6 @@ int usb_phy_gen_create_phy(struct device *dev, struct usb_phy_generic *nop,
 							 GPIOD_ASIS);
 			err = PTR_ERR_OR_ZERO(nop->gpiod_vbus);
 		}
-#else
-		dev_info(dev, "Skip PTR_ERR_OR_ZERO check\n");
-#endif
 	} else if (pdata) {
 		type = pdata->type;
 		clk_rate = pdata->clk_rate;

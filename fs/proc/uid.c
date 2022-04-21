@@ -111,7 +111,7 @@ static struct inode *proc_uid_make_inode(struct super_block *sb, kuid_t kuid)
 		return NULL;
 
 	inode->i_ino = get_next_ino();
-	inode->i_mtime = inode->i_atime = inode->i_ctime = CURRENT_TIME;
+	inode->i_mtime = inode->i_atime = inode->i_ctime = current_time(inode);
 	inode->i_op = &proc_uid_def_inode_operations;
 	inode->i_uid = kuid;
 
@@ -261,9 +261,6 @@ static struct dentry *proc_uid_lookup(struct inode *dir, struct dentry *dentry,
 	uid_t uid = name_to_int(&dentry->d_name);
 	bool uid_exists;
 
-	if (uid == ~0U)
-		goto out;
-
 	rt_mutex_lock(&proc_uid_lock);
 	uid_exists = uid_hash_entry_exists_locked(uid);
 	rt_mutex_unlock(&proc_uid_lock);
@@ -272,7 +269,6 @@ static struct dentry *proc_uid_lookup(struct inode *dir, struct dentry *dentry,
 
 		result = proc_uid_instantiate(dir, dentry, NULL, &kuid);
 	}
-out:
 	return ERR_PTR(result);
 }
 

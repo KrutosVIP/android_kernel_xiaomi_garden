@@ -20,6 +20,9 @@
 #include <linux/err.h>
 #include <linux/vfio.h>
 #include <linux/vmalloc.h>
+#include <linux/sched/mm.h>
+#include <linux/sched/signal.h>
+
 #include <asm/iommu.h>
 #include <asm/tce.h>
 #include <asm/mmu_context.h>
@@ -682,7 +685,7 @@ static void tce_iommu_free_table(struct tce_container *container,
 	unsigned long pages = tbl->it_allocated_size >> PAGE_SHIFT;
 
 	tce_iommu_userspace_view_free(tbl, container->mm);
-	tbl->it_ops->free(tbl);
+	iommu_tce_table_put(tbl);
 	decrement_locked_vm(container->mm, pages);
 }
 

@@ -25,11 +25,7 @@
 #include "mtk_mdp_core.h"
 #include "mtk_mdp_m2m.h"
 #include "mtk_mdp_regs.h"
-#ifdef CONFIG_VIDEO_MEDIATEK_VCU
-#include "mtk_mdp_vpu.h"
-#else
 #include "mtk_vpu.h"
-#endif
 
 
 /**
@@ -61,7 +57,7 @@ static const struct mtk_mdp_fmt mtk_mdp_formats[] = {
 	{
 		.pixelformat	= V4L2_PIX_FMT_MT21C,
 		.depth		= { 8, 4 },
-		.row_depth	= { 8, 4 },
+		.row_depth	= { 8, 8 },
 		.num_planes	= 2,
 		.num_comp	= 2,
 		.align		= &mtk_mdp_size_align,
@@ -69,39 +65,15 @@ static const struct mtk_mdp_fmt mtk_mdp_formats[] = {
 	}, {
 		.pixelformat	= V4L2_PIX_FMT_NV12M,
 		.depth		= { 8, 4 },
-		.row_depth	= { 8, 4 },
+		.row_depth	= { 8, 8 },
 		.num_planes	= 2,
-		.num_comp	= 2,
-		.flags		= MTK_MDP_FMT_FLAG_OUTPUT |
-				  MTK_MDP_FMT_FLAG_CAPTURE,
-	}, {
-		.pixelformat	= V4L2_PIX_FMT_NV12,
-		.depth		= { 12 },
-		.row_depth	= { 8, 4 },
-		.num_planes	= 1,
-		.num_comp	= 2,
-		.flags		= MTK_MDP_FMT_FLAG_OUTPUT |
-				  MTK_MDP_FMT_FLAG_CAPTURE,
-	}, {
-		.pixelformat	= V4L2_PIX_FMT_NV21M,
-		.depth		= { 8, 4 },
-		.row_depth	= { 8, 4 },
-		.num_planes	= 2,
-		.num_comp	= 2,
-		.flags		= MTK_MDP_FMT_FLAG_OUTPUT |
-				  MTK_MDP_FMT_FLAG_CAPTURE,
-	}, {
-		.pixelformat	= V4L2_PIX_FMT_NV21,
-		.depth		= { 12 },
-		.row_depth	= { 8, 4 },
-		.num_planes	= 1,
 		.num_comp	= 2,
 		.flags		= MTK_MDP_FMT_FLAG_OUTPUT |
 				  MTK_MDP_FMT_FLAG_CAPTURE,
 	}, {
 		.pixelformat	= V4L2_PIX_FMT_YUV420M,
 		.depth		= { 8, 2, 2 },
-		.row_depth	= { 8, 2, 2 },
+		.row_depth	= { 8, 4, 4 },
 		.num_planes	= 3,
 		.num_comp	= 3,
 		.flags		= MTK_MDP_FMT_FLAG_OUTPUT |
@@ -109,113 +81,9 @@ static const struct mtk_mdp_fmt mtk_mdp_formats[] = {
 	}, {
 		.pixelformat	= V4L2_PIX_FMT_YVU420,
 		.depth		= { 12 },
-		.row_depth	= { 8, 2, 2 },
+		.row_depth	= { 8 },
 		.num_planes	= 1,
 		.num_comp	= 3,
-		.flags		= MTK_MDP_FMT_FLAG_OUTPUT |
-				  MTK_MDP_FMT_FLAG_CAPTURE,
-	}, {
-		.pixelformat	= V4L2_PIX_FMT_YUV420,
-		.depth		= { 12 },
-		.row_depth	= { 8, 2, 2 },
-		.num_planes	= 1,
-		.num_comp	= 3,
-		.flags		= MTK_MDP_FMT_FLAG_OUTPUT |
-				  MTK_MDP_FMT_FLAG_CAPTURE,
-	}, {
-		.pixelformat	= V4L2_PIX_FMT_YUV422P,
-		.depth		= { 16 },
-		.row_depth	= { 8, 4, 4 },
-		.num_planes	= 1,
-		.num_comp	= 3,
-		.flags		= MTK_MDP_FMT_FLAG_OUTPUT |
-				  MTK_MDP_FMT_FLAG_CAPTURE,
-	}, {
-		.pixelformat	= V4L2_PIX_FMT_NV16,
-		.depth		= { 16 },
-		.row_depth	= { 8, 8 },
-		.num_planes	= 1,
-		.num_comp	= 2,
-		.flags		= MTK_MDP_FMT_FLAG_OUTPUT |
-				  MTK_MDP_FMT_FLAG_CAPTURE,
-	}, {
-		.pixelformat	= V4L2_PIX_FMT_NV16M,
-		.depth		= { 8, 8 },
-		.row_depth	= { 8, 8 },
-		.num_planes	= 2,
-		.num_comp	= 2,
-		.flags		= MTK_MDP_FMT_FLAG_OUTPUT |
-				  MTK_MDP_FMT_FLAG_CAPTURE,
-	}, {
-		.pixelformat	= V4L2_PIX_FMT_YUYV,
-		.depth		= { 16 },
-		.row_depth	= { 16 },
-		.num_planes	= 1,
-		.num_comp	= 1,
-		.flags		= MTK_MDP_FMT_FLAG_OUTPUT |
-				  MTK_MDP_FMT_FLAG_CAPTURE,
-	}, {
-		.pixelformat	= V4L2_PIX_FMT_UYVY,
-		.depth		= { 16 },
-		.row_depth	= { 16 },
-		.num_planes	= 1,
-		.num_comp	= 1,
-		.flags		= MTK_MDP_FMT_FLAG_OUTPUT |
-				  MTK_MDP_FMT_FLAG_CAPTURE,
-	}, {
-		.pixelformat	= V4L2_PIX_FMT_ARGB32,
-		.depth		= { 32 },
-		.row_depth	= { 32 },
-		.num_planes	= 1,
-		.num_comp	= 1,
-		.flags		= MTK_MDP_FMT_FLAG_OUTPUT |
-				  MTK_MDP_FMT_FLAG_CAPTURE,
-	}, {
-		.pixelformat	= V4L2_PIX_FMT_ABGR32,
-		.depth		= { 32 },
-		.row_depth	= { 32 },
-		.num_planes	= 1,
-		.num_comp	= 1,
-		.flags		= MTK_MDP_FMT_FLAG_OUTPUT |
-				  MTK_MDP_FMT_FLAG_CAPTURE,
-	}, {
-		.pixelformat	= V4L2_PIX_FMT_XRGB32,
-		.depth		= { 32 },
-		.row_depth	= { 32 },
-		.num_planes	= 1,
-		.num_comp	= 1,
-		.flags		= MTK_MDP_FMT_FLAG_OUTPUT |
-				  MTK_MDP_FMT_FLAG_CAPTURE,
-	}, {
-		.pixelformat	= V4L2_PIX_FMT_XBGR32,
-		.depth		= { 32 },
-		.row_depth	= { 32 },
-		.num_planes	= 1,
-		.num_comp	= 1,
-		.flags		= MTK_MDP_FMT_FLAG_OUTPUT |
-				  MTK_MDP_FMT_FLAG_CAPTURE,
-	}, {
-		.pixelformat	= V4L2_PIX_FMT_RGB565,
-		.depth		= { 16 },
-		.row_depth	= { 16 },
-		.num_planes	= 1,
-		.num_comp	= 1,
-		.flags		= MTK_MDP_FMT_FLAG_OUTPUT |
-				  MTK_MDP_FMT_FLAG_CAPTURE,
-	}, {
-		.pixelformat	= V4L2_PIX_FMT_RGB24,
-		.depth		= { 24 },
-		.row_depth	= { 24 },
-		.num_planes	= 1,
-		.num_comp	= 1,
-		.flags		= MTK_MDP_FMT_FLAG_OUTPUT |
-				  MTK_MDP_FMT_FLAG_CAPTURE,
-	}, {
-		.pixelformat	= V4L2_PIX_FMT_BGR24,
-		.depth		= { 24 },
-		.row_depth	= { 24 },
-		.num_planes	= 1,
-		.num_comp	= 1,
 		.flags		= MTK_MDP_FMT_FLAG_OUTPUT |
 				  MTK_MDP_FMT_FLAG_CAPTURE,
 	}
@@ -442,8 +310,8 @@ static int mtk_mdp_try_crop(struct mtk_mdp_ctx *ctx, u32 type,
 	if (V4L2_TYPE_IS_OUTPUT(type)) {
 		align_w = 1;
 		align_h = 1;
-		min_w = 8;
-		min_h = 8;
+		min_w = 64;
+		min_h = 32;
 	} else {
 		align_w = variant->pix_align->target_w;
 		align_h = variant->pix_align->target_h;
@@ -604,23 +472,11 @@ static void mtk_mdp_prepare_addr(struct mtk_mdp_ctx *ctx,
 	for (i = 0; i < planes; i++)
 		addr->addr[i] = vb2_dma_contig_plane_dma_addr(vb, i);
 
-	if (planes == 1 && frame->fmt->num_comp > 1) {
-		if ((frame->fmt->pixelformat == V4L2_PIX_FMT_YVU420) ||
-			(frame->fmt->pixelformat == V4L2_PIX_FMT_YUV420)) {
+	if (planes == 1) {
+		if (frame->fmt->pixelformat == V4L2_PIX_FMT_YVU420) {
 			addr->addr[1] = (dma_addr_t)(addr->addr[0] + pix_size);
 			addr->addr[2] = (dma_addr_t)(addr->addr[1] +
 					(pix_size >> 2));
-		} else if (frame->fmt->pixelformat == V4L2_PIX_FMT_YUV422P) {
-			addr->addr[1] = (dma_addr_t)(addr->addr[0] + pix_size);
-			addr->addr[2] = (dma_addr_t)(addr->addr[1] +
-					(pix_size >> 1));
-		} else if (frame->fmt->pixelformat == V4L2_PIX_FMT_NV12 ||
-			frame->fmt->pixelformat == V4L2_PIX_FMT_NV21) {
-			addr->addr[1] = (dma_addr_t)(addr->addr[0] + pix_size);
-			addr->addr[2] = 0;
-		} else if (frame->fmt->pixelformat == V4L2_PIX_FMT_NV16) {
-			addr->addr[1] = (dma_addr_t)(addr->addr[0] + pix_size);
-			addr->addr[2] = 0;
 		} else {
 			dev_err(&ctx->mdp_dev->pdev->dev,
 				"Invalid pixelformat:0x%x\n",
@@ -765,7 +621,7 @@ static void mtk_mdp_m2m_buf_queue(struct vb2_buffer *vb)
 	v4l2_m2m_buf_queue(ctx->m2m_ctx, to_vb2_v4l2_buffer(vb));
 }
 
-static struct vb2_ops mtk_mdp_m2m_qops = {
+static const struct vb2_ops mtk_mdp_m2m_qops = {
 	.queue_setup	 = mtk_mdp_m2m_queue_setup,
 	.buf_prepare	 = mtk_mdp_m2m_buf_prepare,
 	.buf_queue	 = mtk_mdp_m2m_buf_queue,
@@ -781,9 +637,9 @@ static int mtk_mdp_m2m_querycap(struct file *file, void *fh,
 	struct mtk_mdp_ctx *ctx = fh_to_ctx(fh);
 	struct mtk_mdp_dev *mdp = ctx->mdp_dev;
 
-	strlcpy(cap->driver, mdp->driver, sizeof(cap->driver));
+	strlcpy(cap->driver, MTK_MDP_MODULE_NAME, sizeof(cap->driver));
 	strlcpy(cap->card, mdp->pdev->name, sizeof(cap->card));
-	strlcpy(cap->bus_info, mdp->platform, sizeof(cap->bus_info));
+	strlcpy(cap->bus_info, "platform:mt8173", sizeof(cap->bus_info));
 
 	return 0;
 }
@@ -840,7 +696,7 @@ static int mtk_mdp_m2m_g_fmt_mplane(struct file *file, void *fh,
 
 	for (i = 0; i < pix_mp->num_planes; ++i) {
 		pix_mp->plane_fmt[i].bytesperline = (frame->width *
-			frame->fmt->depth[i]) / 8;
+			frame->fmt->row_depth[i]) / 8;
 		pix_mp->plane_fmt[i].sizeimage = (frame->width *
 			frame->height * frame->fmt->depth[i]) / 8;
 
@@ -982,10 +838,10 @@ static int mtk_mdp_m2m_g_selection(struct file *file, void *fh,
 	bool valid = false;
 
 	if (s->type == V4L2_BUF_TYPE_VIDEO_CAPTURE) {
-		if (mtk_mdp_is_target_crop(s->target))
+		if (mtk_mdp_is_target_compose(s->target))
 			valid = true;
 	} else if (s->type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
-		if (mtk_mdp_is_target_compose(s->target))
+		if (mtk_mdp_is_target_crop(s->target))
 			valid = true;
 	}
 	if (!valid) {
@@ -1052,10 +908,10 @@ static int mtk_mdp_m2m_s_selection(struct file *file, void *fh,
 	bool valid = false;
 
 	if (s->type == V4L2_BUF_TYPE_VIDEO_CAPTURE) {
-		if (s->target == V4L2_SEL_TGT_CROP)
+		if (s->target == V4L2_SEL_TGT_COMPOSE)
 			valid = true;
 	} else if (s->type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
-		if (s->target == V4L2_SEL_TGT_COMPOSE)
+		if (s->target == V4L2_SEL_TGT_CROP)
 			valid = true;
 	}
 	if (!valid) {
@@ -1069,7 +925,7 @@ static int mtk_mdp_m2m_s_selection(struct file *file, void *fh,
 	if (ret)
 		return ret;
 
-	if (mtk_mdp_is_target_compose(s->target))
+	if (mtk_mdp_is_target_crop(s->target))
 		frame = &ctx->s_frame;
 	else
 		frame = &ctx->d_frame;
@@ -1133,7 +989,7 @@ static int mtk_mdp_m2m_queue_init(void *priv, struct vb2_queue *src_vq,
 
 	memset(src_vq, 0, sizeof(*src_vq));
 	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
-	src_vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
+	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
 	src_vq->drv_priv = ctx;
 	src_vq->ops = &mtk_mdp_m2m_qops;
 	src_vq->mem_ops = &vb2_dma_contig_memops;
@@ -1147,7 +1003,7 @@ static int mtk_mdp_m2m_queue_init(void *priv, struct vb2_queue *src_vq,
 
 	memset(dst_vq, 0, sizeof(*dst_vq));
 	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-	dst_vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
+	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
 	dst_vq->drv_priv = ctx;
 	dst_vq->ops = &mtk_mdp_m2m_qops;
 	dst_vq->mem_ops = &vb2_dma_contig_memops;
@@ -1316,20 +1172,12 @@ static int mtk_mdp_m2m_open(struct file *file)
 	}
 
 	list_add(&ctx->list, &mdp->ctx_list);
-
-	ret = cmdq_pkt_create(&ctx->cmdq_handle);
-	if (ret) {
-		dev_err(&mdp->pdev->dev, "Create cmdq ptk failed %d\n", ret);
-		goto err_create_cmdq_pkt;
-	}
-
 	mutex_unlock(&mdp->lock);
 
 	mtk_mdp_dbg(0, "%s [%d]", dev_name(&mdp->pdev->dev), ctx->id);
 
 	return 0;
 
-err_create_cmdq_pkt:
 err_load_vpu:
 	mdp->ctx_num--;
 	v4l2_m2m_ctx_release(ctx->m2m_ctx);
@@ -1359,7 +1207,6 @@ static int mtk_mdp_m2m_release(struct file *file)
 	mtk_mdp_vpu_deinit(&ctx->vpu);
 	mdp->ctx_num--;
 	list_del_init(&ctx->list);
-	cmdq_pkt_destroy(ctx->cmdq_handle);
 
 	mtk_mdp_dbg(0, "%s [%d]", dev_name(&mdp->pdev->dev), ctx->id);
 
@@ -1378,7 +1225,7 @@ static const struct v4l2_file_operations mtk_mdp_m2m_fops = {
 	.mmap		= v4l2_m2m_fop_mmap,
 };
 
-static struct v4l2_m2m_ops mtk_mdp_m2m_ops = {
+static const struct v4l2_m2m_ops mtk_mdp_m2m_ops = {
 	.device_run	= mtk_mdp_m2m_device_run,
 	.job_abort	= mtk_mdp_m2m_job_abort,
 };
@@ -1419,7 +1266,7 @@ int mtk_mdp_register_m2m_device(struct mtk_mdp_dev *mdp)
 		goto err_vdev_register;
 	}
 
-	v4l2_info(&mdp->v4l2_dev, "driver registered as /dev/video%d\n",
+	v4l2_info(&mdp->v4l2_dev, "driver registered as /dev/video%d",
 		  mdp->vdev->num);
 	return 0;
 

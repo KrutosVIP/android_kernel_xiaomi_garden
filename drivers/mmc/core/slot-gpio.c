@@ -2,7 +2,6 @@
  * Generic GPIO card-detect helper
  *
  * Copyright (C) 2011, Guennadi Liakhovetski <g.liakhovetski@gmx.de>
- * Copyright (C) 2021 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -37,7 +36,7 @@ static irqreturn_t mmc_gpio_cd_irqt(int irq, void *dev_id)
 	struct mmc_host *host = dev_id;
 
 	host->trigger_card_event = true;
-	mmc_detect_change(host, msecs_to_jiffies(400)); //2020.06.13 longcheer xugui add t-card int 200ms
+	mmc_detect_change(host, msecs_to_jiffies(200));
 
 	return IRQ_HANDLED;
 }
@@ -142,19 +141,18 @@ void mmc_gpiod_request_cd_irq(struct mmc_host *host)
 			ctx->cd_gpio_isr = mmc_gpio_cd_irqt;
 		ret = devm_request_threaded_irq(host->parent, irq,
 			NULL, ctx->cd_gpio_isr,
-			IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING
-			| IRQF_ONESHOT,
+			IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
 			ctx->cd_label, host);
 		if (ret < 0)
 			irq = ret;
-		else
-			enable_irq_wake(irq);
 	}
 
 	host->slot.cd_irq = irq;
 
 	if (irq < 0)
 		host->caps |= MMC_CAP_NEEDS_POLL;
+	else if ((host->caps & MMC_CAP_CD_WAKE) && !enable_irq_wake(irq))
+		host->slot.cd_wake_enabled = true;
 }
 EXPORT_SYMBOL(mmc_gpiod_request_cd_irq);
 
@@ -239,9 +237,6 @@ int mmc_gpiod_request_cd(struct mmc_host *host, const char *con_id,
 	struct gpio_desc *desc;
 	int ret;
 
-	if (!con_id)
-		con_id = ctx->cd_label;
-
 	desc = devm_gpiod_get_index(host->parent, con_id, idx, GPIOD_IN);
 	if (IS_ERR(desc))
 		return PTR_ERR(desc);
@@ -261,6 +256,14 @@ int mmc_gpiod_request_cd(struct mmc_host *host, const char *con_id,
 	return 0;
 }
 EXPORT_SYMBOL(mmc_gpiod_request_cd);
+
+bool mmc_can_gpio_cd(struct mmc_host *host)
+{
+	struct mmc_gpio *ctx = host->slot.handler_priv;
+
+	return ctx->cd_gpio ? true : false;
+}
+EXPORT_SYMBOL(mmc_can_gpio_cd);
 
 /**
  * mmc_gpiod_request_ro - request a gpio descriptor for write protection
@@ -284,9 +287,6 @@ int mmc_gpiod_request_ro(struct mmc_host *host, const char *con_id,
 	struct mmc_gpio *ctx = host->slot.handler_priv;
 	struct gpio_desc *desc;
 	int ret;
-
-	if (!con_id)
-		con_id = ctx->ro_label;
 
 	desc = devm_gpiod_get_index(host->parent, con_id, idx, GPIOD_IN);
 	if (IS_ERR(desc))

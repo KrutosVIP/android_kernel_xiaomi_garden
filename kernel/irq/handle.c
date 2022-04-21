@@ -6,7 +6,7 @@
  *
  * This file contains the core interrupt handling code.
  *
- * Detailed information is available in Documentation/DocBook/genericirq
+ * Detailed information is available in Documentation/core-api/genericirq.rst
  *
  */
 
@@ -19,10 +19,6 @@
 #include <trace/events/irq.h>
 
 #include "internals.h"
-
-#ifdef CONFIG_MTK_RT_THROTTLE_MON
-#include "mtk_rt_mon.h"
-#endif
 
 /**
  * handle_bad_irq - handle spurious and unhandled irqs
@@ -136,38 +132,19 @@ void __irq_wake_thread(struct irq_desc *desc, struct irqaction *action)
 	wake_up_process(action->thread);
 }
 
-#ifdef CONFIG_MTK_RT_THROTTLE_MON
-static void save_isr_info(unsigned long long start, unsigned long long end)
-{
-	unsigned long long dur = end - start;
-
-	if ((current->policy == SCHED_FIFO || current->policy == SCHED_RR)
-		&& mt_rt_mon_enable(smp_processor_id()))
-		current->se.mtk_isr_time += dur;
-}
-#endif
-
 irqreturn_t __handle_irq_event_percpu(struct irq_desc *desc, unsigned int *flags)
 {
 	irqreturn_t retval = IRQ_NONE;
 	unsigned int irq = desc->irq_data.irq;
 	struct irqaction *action;
-#ifdef CONFIG_MTK_RT_THROTTLE_MON
-	unsigned long long t1, t2;
-#endif
+
+	record_irq_time(desc);
 
 	for_each_action_of_desc(desc, action) {
 		irqreturn_t res;
 
 		trace_irq_handler_entry(irq, action);
-#ifdef CONFIG_MTK_RT_THROTTLE_MON
-		t1 = sched_clock();
-#endif
 		res = action->handler(irq, action->dev_id);
-#ifdef CONFIG_MTK_RT_THROTTLE_MON
-		t2 = sched_clock();
-		save_isr_info(t1, t2);
-#endif
 		trace_irq_handler_exit(irq, action, res);
 
 		if (WARN_ONCE(!irqs_disabled(),"irq %u handler %pF enabled interrupts\n",

@@ -17,8 +17,7 @@
 #ifndef _LINUX_DELAYACCT_H
 #define _LINUX_DELAYACCT_H
 
-#include <linux/sched.h>
-#include <linux/slab.h>
+#include <uapi/linux/taskstats.h>
 
 /*
  * Per-task flags relevant to delay accounting
@@ -58,12 +57,7 @@ struct task_delay_info {
 
 	u64 freepages_start;
 	u64 freepages_delay;	/* wait for memory reclaim */
-
-	u64 thrashing_start;
-	u64 thrashing_delay;	/* wait for thrashing page */
-
 	u32 freepages_count;	/* total count of memory reclaim */
-	u32 thrashing_count;	/* total count of thrash waits */
 };
 #endif
 
@@ -77,13 +71,11 @@ extern void delayacct_init(void);
 extern void __delayacct_tsk_init(struct task_struct *);
 extern void __delayacct_tsk_exit(struct task_struct *);
 extern void __delayacct_blkio_start(void);
-extern void __delayacct_blkio_end(void);
+extern void __delayacct_blkio_end(struct task_struct *);
 extern int __delayacct_add_tsk(struct taskstats *, struct task_struct *);
 extern __u64 __delayacct_blkio_ticks(struct task_struct *);
 extern void __delayacct_freepages_start(void);
 extern void __delayacct_freepages_end(void);
-extern void __delayacct_thrashing_start(void);
-extern void __delayacct_thrashing_end(void);
 
 static inline int delayacct_is_task_waiting_on_io(struct task_struct *p)
 {
@@ -130,10 +122,10 @@ static inline void delayacct_blkio_start(void)
 		__delayacct_blkio_start();
 }
 
-static inline void delayacct_blkio_end(void)
+static inline void delayacct_blkio_end(struct task_struct *p)
 {
 	if (current->delays)
-		__delayacct_blkio_end();
+		__delayacct_blkio_end(p);
 	delayacct_clear_flag(DELAYACCT_PF_BLKIO);
 }
 
@@ -164,18 +156,6 @@ static inline void delayacct_freepages_end(void)
 		__delayacct_freepages_end();
 }
 
-static inline void delayacct_thrashing_start(void)
-{
-	if (current->delays)
-		__delayacct_thrashing_start();
-}
-
-static inline void delayacct_thrashing_end(void)
-{
-	if (current->delays)
-		__delayacct_thrashing_end();
-}
-
 #else
 static inline void delayacct_set_flag(int flag)
 {}
@@ -189,7 +169,7 @@ static inline void delayacct_tsk_free(struct task_struct *tsk)
 {}
 static inline void delayacct_blkio_start(void)
 {}
-static inline void delayacct_blkio_end(void)
+static inline void delayacct_blkio_end(struct task_struct *p)
 {}
 static inline int delayacct_add_tsk(struct taskstats *d,
 					struct task_struct *tsk)
@@ -201,10 +181,6 @@ static inline int delayacct_is_task_waiting_on_io(struct task_struct *p)
 static inline void delayacct_freepages_start(void)
 {}
 static inline void delayacct_freepages_end(void)
-{}
-static inline void delayacct_thrashing_start(void)
-{}
-static inline void delayacct_thrashing_end(void)
 {}
 
 #endif /* CONFIG_TASK_DELAY_ACCT */

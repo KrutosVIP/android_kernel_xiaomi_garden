@@ -20,7 +20,6 @@
 #include <linux/blkdev.h>
 #include <linux/backing-dev.h>
 #include <asm/unaligned.h>
-#include <mt-plat/mtk_blocktag.h>
 #include "fat.h"
 
 #ifndef CONFIG_FAT_DEFAULT_IOCHARSET
@@ -223,7 +222,6 @@ static int fat_write_begin(struct file *file, struct address_space *mapping,
 	err = cont_write_begin(file, mapping, pos, len, flags,
 				pagep, fsdata, fat_get_block,
 				&MSDOS_I(mapping->host)->mmu_private);
-	mtk_btag_pidlog_set_pid(*pagep);
 	if (err < 0)
 		fat_write_failed(mapping, pos + len);
 	return err;
@@ -659,7 +657,7 @@ static void fat_set_state(struct super_block *sb,
 	struct msdos_sb_info *sbi = MSDOS_SB(sb);
 
 	/* do not change any thing if mounted read only */
-	if ((sb->s_flags & MS_RDONLY) && !force)
+	if (sb_rdonly(sb) && !force)
 		return;
 
 	/* do not change state if fs was dirty */
@@ -698,21 +696,13 @@ static void fat_set_state(struct super_block *sb,
 	brelse(bh);
 }
 
-static void fat_reset_iocharset(struct fat_mount_options *opts)
-{
-	if (opts->iocharset != fat_default_iocharset) {
-		/* Note: opts->iocharset can be NULL here */
-		kfree(opts->iocharset);
-		opts->iocharset = fat_default_iocharset;
-	}
-}
-
 static void delayed_free(struct rcu_head *p)
 {
 	struct msdos_sb_info *sbi = container_of(p, struct msdos_sb_info, rcu);
 	unload_nls(sbi->nls_disk);
 	unload_nls(sbi->nls_io);
-	fat_reset_iocharset(&sbi->options);
+	if (sbi->options.iocharset != fat_default_iocharset)
+		kfree(sbi->options.iocharset);
 	kfree(sbi);
 }
 
@@ -789,7 +779,7 @@ static void __exit fat_destroy_inodecache(void)
 
 static int fat_remount(struct super_block *sb, int *flags, char *data)
 {
-	int new_rdonly;
+	bool new_rdonly;
 	struct msdos_sb_info *sbi = MSDOS_SB(sb);
 	*flags |= MS_NODIRATIME | (sbi->options.isvfat ? 0 : MS_NOATIME);
 
@@ -797,7 +787,7 @@ static int fat_remount(struct super_block *sb, int *flags, char *data)
 
 	/* make sure we update state on remount. */
 	new_rdonly = *flags & MS_RDONLY;
-	if (new_rdonly != (sb->s_flags & MS_RDONLY)) {
+	if (new_rdonly != sb_rdonly(sb)) {
 		if (new_rdonly)
 			fat_set_state(sb, 0, 0);
 		else
@@ -1127,7 +1117,7 @@ static int parse_options(struct super_block *sb, char *options, int is_vfat,
 	opts->fs_fmask = opts->fs_dmask = current_umask();
 	opts->allow_utime = -1;
 	opts->codepage = fat_default_codepage;
-	fat_reset_iocharset(opts);
+	opts->iocharset = fat_default_iocharset;
 	if (is_vfat) {
 		opts->shortname = VFAT_SFN_DISPLAY_WINNT|VFAT_SFN_CREATE_WIN95;
 		opts->rodir = 0;
@@ -1284,7 +1274,8 @@ static int parse_options(struct super_block *sb, char *options, int is_vfat,
 
 		/* vfat specific */
 		case Opt_charset:
-			fat_reset_iocharset(opts);
+			if (opts->iocharset != fat_default_iocharset)
+				kfree(opts->iocharset);
 			iocharset = match_strdup(&args[0]);
 			if (!iocharset)
 				return -ENOMEM;
@@ -1875,7 +1866,8 @@ out_fail:
 		iput(fat_inode);
 	unload_nls(sbi->nls_io);
 	unload_nls(sbi->nls_disk);
-	fat_reset_iocharset(&sbi->options);
+	if (sbi->options.iocharset != fat_default_iocharset)
+		kfree(sbi->options.iocharset);
 	sb->s_fs_info = NULL;
 	kfree(sbi);
 	return error;

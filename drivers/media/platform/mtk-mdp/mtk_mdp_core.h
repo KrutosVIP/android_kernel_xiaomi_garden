@@ -22,7 +22,6 @@
 #include <media/v4l2-mem2mem.h>
 #include <media/videobuf2-core.h>
 #include <media/videobuf2-dma-contig.h>
-#include <linux/soc/mediatek/mtk-cmdq.h>
 
 #include "mtk_mdp_vpu.h"
 #include "mtk_mdp_comp.h"
@@ -147,8 +146,6 @@ struct mtk_mdp_variant {
  * @pdev:	pointer to the image processor platform device
  * @variant:	the IP variant information
  * @id:		image processor device index (0..MTK_MDP_MAX_DEVS)
- * @driver:		driver name, e.g. "mtk-mdp", "mtk-mdp-1"
- * @platform:		platform name, e.g. "platform:mt8173"
  * @comp:	MDP function components
  * @m2m_dev:	v4l2 memory-to-memory device data
  * @ctx_list:	list of struct mtk_mdp_ctx
@@ -166,9 +163,7 @@ struct mtk_mdp_dev {
 	struct mutex			vpulock;
 	struct platform_device		*pdev;
 	struct mtk_mdp_variant		*variant;
-	int				id;
-	char				driver[16];
-	char				platform[32];
+	u16				id;
 	struct mtk_mdp_comp		*comp[MTK_MDP_COMP_ID_MAX];
 	struct v4l2_m2m_dev		*m2m_dev;
 	struct list_head		ctx_list;
@@ -180,7 +175,6 @@ struct mtk_mdp_dev {
 	unsigned long			id_counter;
 	struct workqueue_struct		*wdt_wq;
 	struct work_struct		wdt_work;
-	struct cmdq_client		*cmdq_client;
 };
 
 /**
@@ -233,12 +227,9 @@ struct mtk_mdp_ctx {
 	struct mtk_mdp_vpu		vpu;
 	struct mutex			slock;
 	struct work_struct		work;
-	struct cmdq_pkt			*cmdq_handle;
 };
 
 extern int mtk_mdp_dbg_level;
-
-#define DEBUG	1
 
 #if defined(DEBUG)
 

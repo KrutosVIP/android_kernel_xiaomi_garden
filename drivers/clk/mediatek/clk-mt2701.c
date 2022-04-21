@@ -20,6 +20,7 @@
 
 #include "clk-mtk.h"
 #include "clk-gate.h"
+#include "clk-cpumux.h"
 
 #include <dt-bindings/clock/mt2701-clk.h>
 
@@ -147,6 +148,7 @@ static const struct mtk_fixed_factor top_fixed_divs[] = {
 	FACTOR(CLK_TOP_CLK26M_D8, "clk26m_d8", "clk26m", 1, 8),
 	FACTOR(CLK_TOP_32K_INTERNAL, "32k_internal", "clk26m", 1, 793),
 	FACTOR(CLK_TOP_32K_EXTERNAL, "32k_external", "rtc32k", 1, 1),
+	FACTOR(CLK_TOP_AXISEL_D4, "axisel_d4", "axi_sel", 1, 4),
 };
 
 static const char * const axi_parents[] = {
@@ -493,6 +495,10 @@ static const char * const cpu_parents[] = {
 	"mmpll"
 };
 
+static const struct mtk_composite cpu_muxes[] __initconst = {
+	MUX(CLK_INFRA_CPUSEL, "infra_cpu_sel", cpu_parents, 0x0000, 2, 2),
+};
+
 static const struct mtk_composite top_muxes[] = {
 	MUX_GATE_FLAGS(CLK_TOP_AXI_SEL, "axi_sel", axi_parents,
 		0x0040, 0, 3, 7, CLK_IS_CRITICAL),
@@ -759,6 +765,9 @@ static void mtk_infrasys_init_early(struct device_node *node)
 	mtk_clk_register_factors(infra_fixed_divs, ARRAY_SIZE(infra_fixed_divs),
 						infra_clk_data);
 
+	mtk_clk_register_cpumuxes(node, cpu_muxes, ARRAY_SIZE(cpu_muxes),
+				  infra_clk_data);
+
 	r = of_clk_add_provider(node, of_clk_src_onecell_get, infra_clk_data);
 	if (r)
 		pr_err("%s(): could not register clock provider: %d\n",
@@ -787,8 +796,12 @@ static int mtk_infrasys_init(struct platform_device *pdev)
 						infra_clk_data);
 
 	r = of_clk_add_provider(node, of_clk_src_onecell_get, infra_clk_data);
+	if (r)
+		return r;
 
-	return r;
+	mtk_register_reset_controller(node, 2, 0x30);
+
+	return 0;
 }
 
 static const struct mtk_gate_regs peri0_cg_regs = {
@@ -845,13 +858,13 @@ static const struct mtk_gate peri_clks[] = {
 	GATE_PERI0(CLK_PERI_USB1, "usb1_ck", "usb20_sel", 11),
 	GATE_PERI0(CLK_PERI_USB0, "usb0_ck", "usb20_sel", 10),
 	GATE_PERI0(CLK_PERI_PWM, "pwm_ck", "axi_sel", 9),
-	GATE_PERI0(CLK_PERI_PWM7, "pwm7_ck", "axi_sel", 8),
-	GATE_PERI0(CLK_PERI_PWM6, "pwm6_ck", "axi_sel", 7),
-	GATE_PERI0(CLK_PERI_PWM5, "pwm5_ck", "axi_sel", 6),
-	GATE_PERI0(CLK_PERI_PWM4, "pwm4_ck", "axi_sel", 5),
-	GATE_PERI0(CLK_PERI_PWM3, "pwm3_ck", "axi_sel", 4),
-	GATE_PERI0(CLK_PERI_PWM2, "pwm2_ck", "axi_sel", 3),
-	GATE_PERI0(CLK_PERI_PWM1, "pwm1_ck", "axi_sel", 2),
+	GATE_PERI0(CLK_PERI_PWM7, "pwm7_ck", "axisel_d4", 8),
+	GATE_PERI0(CLK_PERI_PWM6, "pwm6_ck", "axisel_d4", 7),
+	GATE_PERI0(CLK_PERI_PWM5, "pwm5_ck", "axisel_d4", 6),
+	GATE_PERI0(CLK_PERI_PWM4, "pwm4_ck", "axisel_d4", 5),
+	GATE_PERI0(CLK_PERI_PWM3, "pwm3_ck", "axisel_d4", 4),
+	GATE_PERI0(CLK_PERI_PWM2, "pwm2_ck", "axisel_d4", 3),
+	GATE_PERI0(CLK_PERI_PWM1, "pwm1_ck", "axisel_d4", 2),
 	GATE_PERI0(CLK_PERI_THERM, "therm_ck", "axi_sel", 1),
 	GATE_PERI0(CLK_PERI_NFI, "nfi_ck", "nfi2x_sel", 0),
 
@@ -906,8 +919,12 @@ static int mtk_pericfg_init(struct platform_device *pdev)
 			&mt2701_clk_lock, clk_data);
 
 	r = of_clk_add_provider(node, of_clk_src_onecell_get, clk_data);
+	if (r)
+		return r;
 
-	return r;
+	mtk_register_reset_controller(node, 2, 0x0);
+
+	return 0;
 }
 
 #define MT8590_PLL_FMAX		(2000 * MHZ)

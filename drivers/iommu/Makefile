@@ -1,8 +1,4 @@
-ccflags-y += -I$(srctree)/drivers/misc/mediatek/include
-ccflags-y += -I$(srctree)/drivers/misc/mediatek/include/mt-plat/$(MTK_PLATFORM)/include/
-ccflags-$(CONFIG_MTK_AEE_FEATURE) += -I$(srctree)/drivers/misc/mediatek/include/mt-plat
-ccflags-y += -I$(srctree)/drivers/misc/mediatek/mmp/
-
+# SPDX-License-Identifier: GPL-2.0
 obj-$(CONFIG_IOMMU_API) += iommu.o
 obj-$(CONFIG_IOMMU_API) += iommu-traces.o
 obj-$(CONFIG_IOMMU_API) += iommu-sysfs.o
@@ -24,8 +20,6 @@ obj-$(CONFIG_IPMMU_VMSA) += ipmmu-vmsa.o
 obj-$(CONFIG_IRQ_REMAP) += intel_irq_remapping.o irq_remapping.o
 obj-$(CONFIG_MTK_IOMMU) += mtk_iommu.o
 obj-$(CONFIG_MTK_IOMMU_V1) += mtk_iommu_v1.o
-obj-$(CONFIG_MTK_IOMMU_V2) += mtk_iommu_v2.o
-obj-$(CONFIG_MTK_IOMMU_V2) += mtk_iommu_ext.o
 obj-$(CONFIG_OMAP_IOMMU) += omap-iommu.o
 obj-$(CONFIG_OMAP_IOMMU_DEBUG) += omap-iommu-debug.o
 obj-$(CONFIG_ROCKCHIP_IOMMU) += rockchip-iommu.o
@@ -34,3 +28,4 @@ obj-$(CONFIG_TEGRA_IOMMU_SMMU) += tegra-smmu.o
 obj-$(CONFIG_EXYNOS_IOMMU) += exynos-iommu.o
 obj-$(CONFIG_FSL_PAMU) += fsl_pamu.o fsl_pamu_domain.o
 obj-$(CONFIG_S390_IOMMU) += s390-iommu.o
+obj-$(CONFIG_QCOM_IOMMU) += qcom_iommu.o

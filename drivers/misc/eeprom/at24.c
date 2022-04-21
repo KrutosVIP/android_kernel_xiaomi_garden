@@ -19,7 +19,7 @@
 #include <linux/log2.h>
 #include <linux/bitops.h>
 #include <linux/jiffies.h>
-#include <linux/of.h>
+#include <linux/property.h>
 #include <linux/acpi.h>
 #include <linux/i2c.h>
 #include <linux/nvmem-provider.h>
@@ -170,7 +170,6 @@ static const struct i2c_device_id at24_ids[] = {
 	{ "24c256",	AT24_DEVICE_MAGIC(262144 / 8,	AT24_FLAG_ADDR16) },
 	{ "24c512",	AT24_DEVICE_MAGIC(524288 / 8,	AT24_FLAG_ADDR16) },
 	{ "24c1024",	AT24_DEVICE_MAGIC(1048576 / 8,	AT24_FLAG_ADDR16) },
-	{ "24c2048",	AT24_DEVICE_MAGIC(2097152 / 8,	AT24_FLAG_ADDR16) },
 	{ "at24", 0 },
 	{ /* END OF LIST */ }
 };
@@ -570,26 +569,26 @@ static int at24_write(void *priv, unsigned int off, void *val, size_t count)
 	return 0;
 }
 
-#ifdef CONFIG_OF
-static void at24_get_ofdata(struct i2c_client *client,
-			    struct at24_platform_data *chip)
+static void at24_get_pdata(struct device *dev, struct at24_platform_data *chip)
 {
-	const __be32 *val;
-	struct device_node *node = client->dev.of_node;
+	int err;
+	u32 val;
 
-	if (node) {
-		if (of_get_property(node, "read-only", NULL))
-			chip->flags |= AT24_FLAG_READONLY;
-		val = of_get_property(node, "pagesize", NULL);
-		if (val)
-			chip->page_size = be32_to_cpup(val);
+	if (device_property_present(dev, "read-only"))
+		chip->flags |= AT24_FLAG_READONLY;
+
+	err = device_property_read_u32(dev, "pagesize", &val);
+	if (!err) {
+		chip->page_size = val;
+	} else {
+		/*
+		 * This is slow, but we can't know all eeproms, so we better
+		 * play safe. Specifying custom eeprom-types via platform_data
+		 * is recommended anyhow.
+		 */
+		chip->page_size = 1;
 	}
 }
-#else
-static void at24_get_ofdata(struct i2c_client *client,
-			    struct at24_platform_data *chip)
-{ }
-#endif /* CONFIG_OF */
 
 static int at24_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
@@ -621,15 +620,8 @@ static int at24_probe(struct i2c_client *client, const struct i2c_device_id *id)
 		chip.byte_len = BIT(magic & AT24_BITMASK(AT24_SIZE_BYTELEN));
 		magic >>= AT24_SIZE_BYTELEN;
 		chip.flags = magic & AT24_BITMASK(AT24_SIZE_FLAGS);
-		/*
-		 * This is slow, but we can't know all eeproms, so we better
-		 * play safe. Specifying custom eeprom-types via platform_data
-		 * is recommended anyhow.
-		 */
-		chip.page_size = 1;
 
-		/* update chipdata if OF is present */
-		at24_get_ofdata(client, &chip);
+		at24_get_pdata(&client->dev, &chip);
 
 		chip.setup = NULL;
 		chip.context = NULL;
@@ -777,7 +769,7 @@ static int at24_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	at24->nvmem_config.name = dev_name(&client->dev);
 	at24->nvmem_config.dev = &client->dev;
 	at24->nvmem_config.read_only = !writable;
-	at24->nvmem_config.root_only = !(chip.flags & AT24_FLAG_IRUGO);
+	at24->nvmem_config.root_only = true;
 	at24->nvmem_config.owner = THIS_MODULE;
 	at24->nvmem_config.compat = true;
 	at24->nvmem_config.base_dev = &client->dev;

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __ASM_KASAN_H
 #define __ASM_KASAN_H
 
@@ -26,8 +27,7 @@
  * should satisfy the following equation:
  *      KASAN_SHADOW_OFFSET = KASAN_SHADOW_END - (1ULL << 61)
  */
-#define KASAN_SHADOW_OFFSET     (KASAN_SHADOW_END - (1ULL \
-	<< (64 - KASAN_SHADOW_SCALE_SHIFT)))
+#define KASAN_SHADOW_OFFSET     (KASAN_SHADOW_END - (1ULL << (64 - 3)))
 
 void kasan_init(void);
 void kasan_copy_shadow(pgd_t *pgdir);

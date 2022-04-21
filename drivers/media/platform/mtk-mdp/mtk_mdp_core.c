@@ -26,15 +26,10 @@
 #include <linux/pm_runtime.h>
 #include <linux/workqueue.h>
 #include <soc/mediatek/smi.h>
-#include <linux/iommu.h>
 
 #include "mtk_mdp_core.h"
 #include "mtk_mdp_m2m.h"
-#ifdef CONFIG_VIDEO_MEDIATEK_VCU
-#include "mtk_mdp_vpu.h"
-#else
 #include "mtk_vpu.h"
-#endif
 
 /* MDP debug log level (0-3). 3 shows all the logs. */
 int mtk_mdp_dbg_level;
@@ -55,29 +50,12 @@ static const struct of_device_id mtk_mdp_comp_dt_ids[] = {
 	}, {
 		.compatible = "mediatek,mt8173-mdp-wrot",
 		.data = (void *)MTK_MDP_WROT
-	}, {
-		.compatible = "mediatek,mt2712-mdp-rdma",
-		.data = (void *)MTK_MDP_RDMA
-	}, {
-		.compatible = "mediatek,mt2712-mdp-rsz",
-		.data = (void *)MTK_MDP_RSZ
-	}, {
-		.compatible = "mediatek,mt2712-mdp-tdshp",
-		.data = (void *)MTK_MDP_TDSHP
-	}, {
-		.compatible = "mediatek,mt2712-mdp-wdma",
-		.data = (void *)MTK_MDP_WDMA
-	}, {
-		.compatible = "mediatek,mt2712-mdp-wrot",
-		.data = (void *)MTK_MDP_WROT
 	},
 	{ },
 };
 
 static const struct of_device_id mtk_mdp_of_ids[] = {
-	{ .compatible = "mediatek,mt2701-mdp", .data = "platform:mt2701" },
-	{ .compatible = "mediatek,mt8173-mdp", .data = "platform:mt8173" },
-	{ .compatible = "mediatek,mt2712-mdp", .data = "platform:mt2712" },
+	{ .compatible = "mediatek,mt8173-mdp", },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, mtk_mdp_of_ids);
@@ -108,71 +86,47 @@ static void mtk_mdp_wdt_worker(struct work_struct *work)
 
 	mtk_mdp_err("Watchdog timeout");
 
-	list_for_each_entry(ctx, &mdp->ctx_list, list)
+	list_for_each_entry(ctx, &mdp->ctx_list, list) {
+		mtk_mdp_dbg(0, "[%d] Change as state error", ctx->id);
 		mtk_mdp_ctx_state_lock_set(ctx, MTK_MDP_CTX_ERROR);
+	}
 }
 
-#ifndef CONFIG_VIDEO_MEDIATEK_VCU
 static void mtk_mdp_reset_handler(void *priv)
 {
 	struct mtk_mdp_dev *mdp = priv;
 
 	queue_work(mdp->wdt_wq, &mdp->wdt_work);
 }
-#endif
 
 static int mtk_mdp_probe(struct platform_device *pdev)
 {
 	struct mtk_mdp_dev *mdp;
 	struct device *dev = &pdev->dev;
-	struct device_node *node;
-	struct platform_device *cmdq_dev;
+	struct device_node *node, *parent;
 	int i, ret = 0;
-	struct iommu_domain *iommu;
-
-	iommu = iommu_get_domain_for_dev(dev);
-	if (!iommu) {
-		dev_info(dev, "Waiting iommu driver ready...\n");
-		return -EPROBE_DEFER;
-	}
-	/* Check whether cmdq driver is ready */
-	node = of_parse_phandle(dev->of_node, "mediatek,gce", 0);
-	if (!node) {
-		dev_err(dev, "cannot get gce node handle\n");
-		return -EINVAL;
-	}
-
-	cmdq_dev = of_find_device_by_node(node);
-	if (!cmdq_dev || !cmdq_dev->dev.driver) {
-		dev_err(dev, "Waiting cmdq driver ready...\n");
-		of_node_put(node);
-		return -EPROBE_DEFER;
-	}
 
 	mdp = devm_kzalloc(dev, sizeof(*mdp), GFP_KERNEL);
 	if (!mdp)
 		return -ENOMEM;
 
-	ret = of_property_read_u32(dev->of_node, "mediatek,mdpid", (u32 *)&mdp->id);
-	if (ret) {
-		dev_info(dev, "not set mediatek,mdpid, use default id 0.\n");
-		mdp->id = 0;
-	}
-
-	if (mdp->id == 0)
-		strlcpy(mdp->driver, MTK_MDP_MODULE_NAME, sizeof(mdp->driver));
-	else
-		snprintf(mdp->driver, sizeof(mdp->driver), "%s-%d", MTK_MDP_MODULE_NAME, mdp->id);
-
-	strlcpy(mdp->platform, of_device_get_match_data(dev), sizeof(mdp->platform));
+	mdp->id = pdev->id;
 	mdp->pdev = pdev;
 	INIT_LIST_HEAD(&mdp->ctx_list);
 
 	mutex_init(&mdp->lock);
 	mutex_init(&mdp->vpulock);
 
+	/* Old dts had the components as child nodes */
+	if (of_get_next_child(dev->of_node, NULL)) {
+		parent = dev->of_node;
+		dev_warn(dev, "device tree is out of date\n");
+	} else {
+		parent = dev->of_node->parent;
+	}
+
 	/* Iterate over sibling MDP function blocks */
-	for_each_child_of_node(dev->of_node->parent, node) {
+	for_each_child_of_node(parent, node) {
 		const struct of_device_id *of_id;
 		enum mtk_mdp_comp_type comp_type;
 		int comp_id;
@@ -183,16 +137,16 @@ static int mtk_mdp_probe(struct platform_device *pdev)
 			continue;
 
 		if (!of_device_is_available(node)) {
-			dev_err(dev, "Skipping disabled component %s\n",
-				node->full_name);
+			dev_err(dev, "Skipping disabled component %pOF\n",
+				node);
 			continue;
 		}
 
 		comp_type = (enum mtk_mdp_comp_type)of_id->data;
 		comp_id = mtk_mdp_comp_get_id(dev, node, comp_type);
 		if (comp_id < 0) {
-			dev_warn(dev, "Skipping unknown component %s\n",
-				 node->full_name);
+			dev_warn(dev, "Skipping unknown component %pOF\n",
+				 node);
 			continue;
 		}
 
@@ -210,23 +164,22 @@ static int mtk_mdp_probe(struct platform_device *pdev)
 
 	mdp->job_wq = create_singlethread_workqueue(MTK_MDP_MODULE_NAME);
 	if (!mdp->job_wq) {
-		dev_err(dev, "unable to alloc job workqueue\n");
+		dev_err(&pdev->dev, "unable to alloc job workqueue\n");
 		ret = -ENOMEM;
 		goto err_alloc_job_wq;
 	}
 
 	mdp->wdt_wq = create_singlethread_workqueue("mdp_wdt_wq");
 	if (!mdp->wdt_wq) {
-		dev_err(dev, "unable to alloc wdt workqueue\n");
+		dev_err(&pdev->dev, "unable to alloc wdt workqueue\n");
 		ret = -ENOMEM;
 		goto err_alloc_wdt_wq;
 	}
-
 	INIT_WORK(&mdp->wdt_work, mtk_mdp_wdt_worker);
 
 	ret = v4l2_device_register(dev, &mdp->v4l2_dev);
 	if (ret) {
-		dev_err(dev, "Failed to register v4l2 device\n");
+		dev_err(&pdev->dev, "Failed to register v4l2 device\n");
 		ret = -EINVAL;
 		goto err_dev_register;
 	}
@@ -238,20 +191,14 @@ static int mtk_mdp_probe(struct platform_device *pdev)
 	}
 
 	mdp->vpu_dev = vpu_get_plat_device(pdev);
-#ifndef CONFIG_VIDEO_MEDIATEK_VCU
 	vpu_wdt_reg_handler(mdp->vpu_dev, mtk_mdp_reset_handler, mdp,
 			    VPU_RST_MDP);
-#endif
 
 	platform_set_drvdata(pdev, mdp);
 
 	vb2_dma_contig_set_max_seg_size(&pdev->dev, DMA_BIT_MASK(32));
 
 	pm_runtime_enable(dev);
-
-	mdp->cmdq_client = cmdq_mbox_create(dev, 0);
-	mtk_mdp_dbg(0, "cmdq_mbox client=%p, chan=%p", mdp->cmdq_client, mdp->cmdq_client->chan);
-
 	dev_dbg(dev, "mdp-%d registered successfully\n", mdp->id);
 
 	return 0;
@@ -290,8 +237,6 @@ static int mtk_mdp_remove(struct platform_device *pdev)
 
 	for (i = 0; i < ARRAY_SIZE(mdp->comp); i++)
 		mtk_mdp_comp_deinit(&pdev->dev, mdp->comp[i]);
-
-	cmdq_mbox_destroy(mdp->cmdq_client);
 
 	dev_dbg(&pdev->dev, "%s driver unloaded\n", pdev->name);
 	return 0;

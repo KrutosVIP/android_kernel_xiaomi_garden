@@ -21,10 +21,8 @@
 #include <linux/poll.h>
 #include <linux/usb/iowarrior.h>
 
-/* Version Information */
-#define DRIVER_VERSION "v0.4.0"
 #define DRIVER_AUTHOR "Christian Lucht <lucht@codemercs.com>"
-#define DRIVER_DESC "USB IO-Warrior driver (Linux 2.6.x)"
+#define DRIVER_DESC "USB IO-Warrior driver"
 
 #define USB_VENDOR_ID_CODEMERCS		1984
 /* low speed iowarrior */
@@ -368,14 +366,9 @@ static ssize_t iowarrior_write(struct file *file,
 	case USB_DEVICE_ID_CODEMERCS_IOWPV2:
 	case USB_DEVICE_ID_CODEMERCS_IOW40:
 		/* IOW24 and IOW40 use a synchronous call */
-		buf = kmalloc(count, GFP_KERNEL);
-		if (!buf) {
-			retval = -ENOMEM;
-			goto exit;
-		}
-		if (copy_from_user(buf, user_buffer, count)) {
-			retval = -EFAULT;
-			kfree(buf);
+		buf = memdup_user(user_buffer, count);
+		if (IS_ERR(buf)) {
+			retval = PTR_ERR(buf);
 			goto exit;
 		}
 		retval = usb_set_report(dev->interface, 2, 0, buf, count);
@@ -756,9 +749,8 @@ static int iowarrior_probe(struct usb_interface *interface,
 	struct usb_device *udev = interface_to_usbdev(interface);
 	struct iowarrior *dev = NULL;
 	struct usb_host_interface *iface_desc;
-	struct usb_endpoint_descriptor *endpoint;
-	int i;
 	int retval = -ENOMEM;
+	int res;
 
 	/* allocate memory for our device state and initialize it */
 	dev = kzalloc(sizeof(struct iowarrior), GFP_KERNEL);
@@ -781,27 +773,19 @@ static int iowarrior_probe(struct usb_interface *interface,
 	iface_desc = interface->cur_altsetting;
 	dev->product_id = le16_to_cpu(udev->descriptor.idProduct);
 
-	/* set up the endpoint information */
-	for (i = 0; i < iface_desc->desc.bNumEndpoints; ++i) {
-		endpoint = &iface_desc->endpoint[i].desc;
-
-		if (usb_endpoint_is_int_in(endpoint))
-			dev->int_in_endpoint = endpoint;
-		if (usb_endpoint_is_int_out(endpoint))
-			/* this one will match for the IOWarrior56 only */
-			dev->int_out_endpoint = endpoint;
-	}
-
-	if (!dev->int_in_endpoint) {
+	res = usb_find_last_int_in_endpoint(iface_desc, &dev->int_in_endpoint);
+	if (res) {
 		dev_err(&interface->dev, "no interrupt-in endpoint found\n");
-		retval = -ENODEV;
+		retval = res;
 		goto error;
 	}
 
 	if (dev->product_id == USB_DEVICE_ID_CODEMERCS_IOW56) {
-		if (!dev->int_out_endpoint) {
+		res = usb_find_last_int_out_endpoint(iface_desc,
+				&dev->int_out_endpoint);
+		if (res) {
 			dev_err(&interface->dev, "no interrupt-out endpoint found\n");
-			retval = -ENODEV;
+			retval = res;
 			goto error;
 		}
 	}
@@ -886,20 +870,19 @@ static void iowarrior_disconnect(struct usb_interface *interface)
 	dev = usb_get_intfdata(interface);
 	mutex_lock(&iowarrior_open_disc_lock);
 	usb_set_intfdata(interface, NULL);
-	/* prevent device read, write and ioctl */
-	dev->present = 0;
 
 	minor = dev->minor;
-	mutex_unlock(&iowarrior_open_disc_lock);
-	/* give back our minor - this will call close() locks need to be dropped at this point*/
 
+	/* give back our minor */
 	usb_deregister_dev(interface, &iowarrior_class);
 
 	mutex_lock(&dev->mutex);
 
 	/* prevent device read, write and ioctl */
+	dev->present = 0;
 
 	mutex_unlock(&dev->mutex);
+	mutex_unlock(&iowarrior_open_disc_lock);
 
 	if (dev->opened) {
 		/* There is a process that holds a filedescriptor to the device ,

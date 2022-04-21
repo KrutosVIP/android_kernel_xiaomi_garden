@@ -1,7 +1,7 @@
 /*
  * Implementation of the kernel access vector cache (AVC).
  *
- * Authors:  Stephen Smalley, <sds@epoch.ncsc.mil>
+ * Authors:  Stephen Smalley, <sds@tycho.nsa.gov>
  *	     James Morris <jmorris@redhat.com>
  *
  * Update:   KaiGai, Kohei <kaigai@ak.jp.nec.com>
@@ -197,8 +197,6 @@ void __init avc_init(void)
 	avc_xperms_data_cachep = kmem_cache_create("avc_xperms_data",
 					sizeof(struct extended_perms_data),
 					0, SLAB_PANIC, NULL);
-
-	audit_log(current->audit_context, GFP_KERNEL, AUDIT_KERNEL, "AVC INITIALIZED\n");
 }
 
 int avc_get_hash_stats(char *page)
@@ -732,22 +730,6 @@ static void avc_audit_post_callback(struct audit_buffer *ab, void *a)
 	if (ad->selinux_audit_data->denied) {
 		audit_log_format(ab, " permissive=%u",
 				 ad->selinux_audit_data->result ? 0 : 1);
-#if defined(CONFIG_MTK_SELINUX_AEE_WARNING) &&\
-	defined(MTK_SELINUX_WARNING_ENABLE)
-		{
-			struct nlmsghdr *nlh;
-			char *selinux_data;
-
-			if (ab) {
-				nlh = nlmsg_hdr(audit_get_skb(ab));
-				selinux_data = nlmsg_data(nlh);
-				if (nlh->nlmsg_type != AUDIT_EOE) {
-					if (nlh->nlmsg_type == 1400)
-						mtk_audit_hook(selinux_data);
-				}
-			}
-		}
-#endif
 	}
 }
 
